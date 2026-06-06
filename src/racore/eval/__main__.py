@@ -25,18 +25,20 @@ if TYPE_CHECKING:
 _JUDGES = {"substring": SubstringEntailmentJudge, "overlap": TokenOverlapEntailmentJudge}
 
 
-def _build_pipeline(llm_kind: str, judge_kind: str) -> Pipeline:
+def _build_pipeline(llm_kind: str, judge_kind: str, model: str | None = None) -> Pipeline:
     """Start from the $0 stack and swap only the LLM and/or judge that were selected."""
     pipeline = dataclasses.replace(demo_pipeline(), judge=_JUDGES[judge_kind]())
     if llm_kind == "anthropic":
-        from racore.adapters.llm_anthropic import AnthropicLLM  # lazy: keeps the SDK optional.
+        # Lazy import keeps the SDK optional — the mock path never reaches here.
+        from racore.adapters.llm_anthropic import AnthropicConfig, AnthropicLLM
 
-        return dataclasses.replace(pipeline, llm=AnthropicLLM())
+        config = AnthropicConfig(model=model) if model else AnthropicConfig()
+        return dataclasses.replace(pipeline, llm=AnthropicLLM(config))
     return pipeline
 
 
-async def _run(llm_kind: str, judge_kind: str) -> HarnessReport:
-    pipeline = _build_pipeline(llm_kind, judge_kind)
+async def _run(llm_kind: str, judge_kind: str, model: str | None = None) -> HarnessReport:
+    pipeline = _build_pipeline(llm_kind, judge_kind, model)
     await pipeline.ingest(golden_source())
     return await run(pipeline, golden_dataset(), default_evaluators())
 
@@ -58,10 +60,18 @@ def main() -> None:
         default="substring",
         help="entailment judge: 'substring' (exact, default) or 'overlap' (paraphrase-tolerant).",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="override the provider model id (anthropic only), e.g. claude-haiku-4-5.",
+    )
     args = parser.parse_args()
 
-    report = asyncio.run(_run(args.llm, args.judge))
-    print(f"# llm={args.llm}  judge={args.judge}")
+    report = asyncio.run(_run(args.llm, args.judge, args.model))
+    header = f"# llm={args.llm}  judge={args.judge}"
+    if args.llm == "anthropic" and args.model:
+        header += f"  model={args.model}"
+    print(header)
     print(report.render())
 
 

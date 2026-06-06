@@ -10,18 +10,24 @@ text + cited markers. The real network path is exercised by hand via ``python -m
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+import sys
 from typing import TYPE_CHECKING
 
-from racore.adapters.llm_anthropic import AnthropicConfig, AnthropicLLM
+import pytest
+
+from racore.adapters.llm_anthropic import AnthropicConfig, AnthropicLLM, _extract_text
 from racore.core.types import Evidence, GroundedContext, LLMRequest
 
 if TYPE_CHECKING:
     from typing import Any
 
+_HAS_ANTHROPIC = importlib.util.find_spec("anthropic") is not None
+
 
 class _FakeBlock:
-    def __init__(self, text: str) -> None:
-        self.type = "text"
+    def __init__(self, text: str, type_: str = "text") -> None:
+        self.type = type_
         self.text = text
 
 
@@ -111,3 +117,47 @@ async def _batch_case() -> None:
     assert len(responses) == 2
     assert all(r.cited_markers == (1,) for r in responses)
     assert len(client.messages.calls) == 2  # one create() per request
+
+
+def test_extract_text_concatenates_text_blocks_only() -> None:
+    # The response may carry non-text blocks (e.g. thinking/tool_use); only text counts.
+    message = _FakeMessage(
+        [_FakeBlock("Hello "), _FakeBlock("ignored", type_="thinking"), _FakeBlock("world.")]
+    )
+    assert _extract_text(message) == "Hello world."
+
+
+def test_missing_sdk_raises_a_friendly_error() -> None:
+    asyncio.run(_missing_sdk_case())
+
+
+async def _missing_sdk_case() -> None:
+    # Without an injected client the adapter must import the SDK; if it's absent, the error
+    # should name the optional extra rather than surfacing a bare ImportError. Forcing
+    # ``sys.modules['anthropic'] = None`` makes ``import anthropic`` raise, regardless of
+    # whether the extra happens to be installed.
+    llm = AnthropicLLM()
+    request = LLMRequest(query="q", context=GroundedContext(query="q", evidences=(_evidence("x"),)))
+    sentinel = object()
+    saved: object = sys.modules.get("anthropic", sentinel)
+    sys.modules["anthropic"] = None  # type: ignore[assignment]
+    try:
+        with pytest.raises(RuntimeError, match=r"racore\[anthropic\]"):
+            await llm.generate([request])
+    finally:
+        if saved is sentinel:
+            sys.modules.pop("anthropic", None)
+        else:
+            sys.modules["anthropic"] = saved  # type: ignore[assignment]
+
+
+@pytest.mark.skipif(not _HAS_ANTHROPIC, reason="optional 'anthropic' extra not installed")
+def test_real_sdk_client_satisfies_adapter_contract() -> None:
+    # Runs only when `uv sync --extra anthropic` was done. No network: the constructor is
+    # offline, and we only assert the client shape the adapter relies on still exists — this
+    # catches an SDK that renamed `messages.create` out from under us.
+    from anthropic import AsyncAnthropic
+
+    client = AsyncAnthropic(api_key="not-used-no-network-call")
+    assert hasattr(client, "messages")
+    assert callable(getattr(client.messages, "create", None))

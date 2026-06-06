@@ -122,8 +122,9 @@ uv run --env-file .env python -m racore.eval --llm anthropic --judge overlap
 The strict `substring` judge will surface a **faithfulness gap** (the model paraphrases instead of
 quoting); the paraphrase-tolerant `overlap` judge recovers much of it — the same number, two judges,
 showing why the entailment check is a port. The model and its params are configurable via
-`AnthropicConfig` (default `claude-haiku-4-5`, `temperature=0.0` for reproducibility). The core and
-the default test path never import the SDK.
+`AnthropicConfig` (default `claude-haiku-4-5-20251001` and `temperature=0.0`, both pinned for
+reproducible eval); override the model per run with `--model <id>`. The core and the default test
+path never import the SDK.
 
 ## License
 

@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
+import pytest
+
 from racore.adapters.judges import SubstringEntailmentJudge, TokenOverlapEntailmentJudge
 from racore.core import grounding
 from racore.core.types import (
@@ -72,6 +74,13 @@ async def _overlap_vs_substring() -> None:
     assert await TokenOverlapEntailmentJudge().judge(paraphrase) == [True]
     # Overlap is not a free pass: an unrelated claim still fails.
     assert await TokenOverlapEntailmentJudge().judge(unrelated) == [False]
+
+
+def test_overlap_judge_rejects_out_of_range_threshold() -> None:
+    with pytest.raises(ValueError, match="threshold"):
+        TokenOverlapEntailmentJudge(threshold=0.0)
+    with pytest.raises(ValueError, match="threshold"):
+        TokenOverlapEntailmentJudge(threshold=1.5)
 
 
 # --- assemble + per-claim verification --------------------------------------------

@@ -46,7 +46,9 @@ class AnthropicConfig:
     ``ANTHROPIC_API_KEY`` from the environment (load it from a gitignored ``.env`` via, e.g.,
     ``uv run --env-file .env``)."""
 
-    model: str = "claude-haiku-4-5"
+    # Pinned snapshot, not a moving alias, so eval runs are reproducible. Override per run with
+    # `--model`; e.g. `claude-haiku-4-5` (alias) or a newer dated snapshot.
+    model: str = "claude-haiku-4-5-20251001"
     max_tokens: int = 1024
     temperature: float = 0.0  # deterministic-as-possible for reproducible eval runs.
     timeout_s: float = 30.0
