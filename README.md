@@ -159,9 +159,8 @@ A real *semantic* embedder is a drop-in behind the `EmbeddingProvider` port; the
 ```bash
 # put your key in the gitignored .env:  VOYAGE_API_KEY=pa-...
 uv run --extra voyage --env-file .env python -m racore.eval --embedder voyage -v
-# combine with a real generator if you like:
-uv run --extra voyage --extra anthropic --env-file .env \
-  python -m racore.eval --embedder voyage --llm anthropic --judge overlap -v
+# combine with a real generator (one line; backslash continuations don't work in PowerShell):
+uv run --extra voyage --extra anthropic --env-file .env python -m racore.eval --embedder voyage --llm anthropic --judge overlap -v
 ```
 
 This is **not** a lock-in: Voyage is one adapter behind the port, exactly as `AnthropicLLM` is one of

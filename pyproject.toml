@@ -69,11 +69,15 @@ module = "anthropic.*"
 ignore_missing_imports = true
 
 # Same optional-dependency pattern as `anthropic` above: `voyageai` is absent from the default
-# ($0) dev install, so its types are unknown when it isn't installed. The adapter is typed against
-# a local `Protocol`, so the core call path stays fully checked regardless.
+# ($0) dev install, so its types are unknown when it isn't installed. `implicit_reexport` is also
+# needed *when the extra IS installed*: the SDK re-exports `AsyncClient` without listing it in
+# `__all__`, which would trip strict mode's no-implicit-reexport rule on our import. We don't control
+# the SDK's exports; the adapter is typed against a local `Protocol`, so our call path stays fully
+# checked regardless. Keeps the gate green with or without the extra.
 [[tool.mypy.overrides]]
 module = "voyageai.*"
 ignore_missing_imports = true
+implicit_reexport = true
 
 # --- pytest ---
 [tool.pytest.ini_options]

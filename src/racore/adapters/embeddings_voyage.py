@@ -96,6 +96,7 @@ def _build_client(config: VoyageConfig) -> _AsyncClient:
     if config.api_key is not None:
         kwargs["api_key"] = config.api_key
     # The real client is usable as ``_AsyncClient`` (it has an async ``embed``); cast past mypy's
-    # strictness about the precise SDK signature vs our permissive protocol. Keeps the gate green
-    # whether or not the optional extra is installed.
+    # strictness about the precise SDK signature vs our permissive protocol. (The SDK's loose
+    # re-export of ``AsyncClient`` is handled by the scoped mypy override in pyproject.) Keeps the
+    # gate green whether or not the optional extra is installed.
     return cast("_AsyncClient", AsyncClient(**kwargs))
