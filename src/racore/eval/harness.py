@@ -41,8 +41,25 @@ def demo_pipeline() -> Pipeline:
 
 
 @dataclass(frozen=True, slots=True)
+class CaseOutcome:
+    """Per-row detail behind the aggregates, so a number like faithfulness=0.75 can be
+    traced to the specific rows — and the specific unsupported claims — that produced it."""
+
+    id: str
+    question: str
+    answerable: bool
+    abstained: bool
+    answer_correct: bool
+    faithfulness: float
+    citation_correctness: float
+    unsupported_claims: tuple[str, ...]
+    answer: str
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessReport:
-    """Aggregate outcome of a harness run: quality scores plus latency/cost."""
+    """Aggregate outcome of a harness run: quality scores plus latency/cost, with per-case
+    detail retained so a regression can be localized to the row that caused it."""
 
     n_cases: int
     results: tuple[EvalResult, ...]
@@ -51,6 +68,7 @@ class HarnessReport:
     latency_mean_ms: float
     cost_per_answer_usd: float
     stage_millis: tuple[tuple[str, float], ...]
+    per_case: tuple[CaseOutcome, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -65,9 +83,23 @@ class HarnessReport:
                 "mean": self.latency_mean_ms,
             },
             "stage_ms": dict(self.stage_millis),
+            "per_case": [
+                {
+                    "id": c.id,
+                    "question": c.question,
+                    "answerable": c.answerable,
+                    "abstained": c.abstained,
+                    "answer_correct": c.answer_correct,
+                    "faithfulness": c.faithfulness,
+                    "citation_correctness": c.citation_correctness,
+                    "unsupported_claims": list(c.unsupported_claims),
+                    "answer": c.answer,
+                }
+                for c in self.per_case
+            ],
         }
 
-    def render(self) -> str:
+    def render(self, *, verbose: bool = False) -> str:
         lines = [
             "RaCore - evaluation baseline",
             "============================",
@@ -87,6 +119,9 @@ class HarnessReport:
             "Per-stage mean (ms)",
         ]
         lines.extend(f"  {stage:<14} {millis:7.3f}" for stage, millis in self.stage_millis)
+        if verbose and self.per_case:
+            lines += ["", "Per-case (-v)"]
+            lines.extend(_render_case(c) for c in self.per_case)
         return "\n".join(lines)
 
 
@@ -113,7 +148,51 @@ async def run(
         latency_mean_ms=_mean(latencies),
         cost_per_answer_usd=0.0,  # the Phase 0 stack makes no paid calls (ADR-0007).
         stage_millis=_stage_means(cases),
+        per_case=tuple(_case_outcome(case) for case in cases),
     )
+
+
+def _case_outcome(case: EvalCase) -> CaseOutcome:
+    """Flatten one answered case into the per-row facts worth eyeballing."""
+    row, answer = case.row, case.answer
+    correct = (
+        _normalize(row.expected_answer) in _normalize(answer.text)
+        if row.answerable
+        else answer.abstained  # a negative control is "correct" only when it abstains.
+    )
+    return CaseOutcome(
+        id=row.id,
+        question=row.question,
+        answerable=row.answerable,
+        abstained=answer.abstained,
+        answer_correct=correct,
+        faithfulness=answer.grounding.faithfulness,
+        citation_correctness=answer.grounding.citation_correctness,
+        unsupported_claims=answer.grounding.unsupported_claims,
+        answer=answer.text,
+    )
+
+
+def _render_case(case: CaseOutcome) -> str:
+    mark = "ok " if case.answer_correct else "BAD"
+    head = (
+        f"  [{case.id}] {mark} faith={case.faithfulness:.2f} cite={case.citation_correctness:.2f}"
+        f" abstain={'Y' if case.abstained else 'n'}  {case.question}"
+    )
+    body = [f"        A: {_truncate(case.answer, 140)}"]
+    body.extend(
+        f"        - unsupported: {_truncate(claim, 120)}" for claim in case.unsupported_claims
+    )
+    return "\n".join([head, *body])
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def _truncate(text: str, limit: int) -> str:
+    collapsed = " ".join(text.split())
+    return collapsed if len(collapsed) <= limit else collapsed[: limit - 3] + "..."
 
 
 def _stage_means(cases: list[EvalCase]) -> tuple[tuple[str, float], ...]:

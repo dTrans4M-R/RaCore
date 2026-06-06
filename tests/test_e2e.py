@@ -100,6 +100,23 @@ def test_eval_baseline_reports_quality_and_ops() -> None:
     assert metrics["refusal.accuracy"] < 1.0
 
 
+def test_report_carries_per_case_detail() -> None:
+    report = asyncio.run(_baseline())
+
+    # One outcome per golden row, addressable by id, retained for drill-down.
+    assert len(report.per_case) == 8
+    assert {"q1", "n1"} <= {c.id for c in report.per_case}
+
+    # Verbose render surfaces the per-case block; the default render stays compact.
+    verbose = report.render(verbose=True)
+    assert "Per-case" in verbose
+    assert "[q1]" in verbose
+    assert "Per-case" not in report.render(verbose=False)
+
+    # The detail is machine-readable too (for JSON dumps / regression diffs).
+    assert isinstance(report.to_dict()["per_case"], list)
+
+
 async def _baseline() -> HarnessReport:
     pipeline = demo_pipeline()
     await pipeline.ingest(golden_source())

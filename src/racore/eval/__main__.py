@@ -65,6 +65,12 @@ def main() -> None:
         default=None,
         help="override the provider model id (anthropic only), e.g. claude-haiku-4-5.",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="print per-case detail (question, answer, the claims that were unsupported).",
+    )
     args = parser.parse_args()
 
     report = asyncio.run(_run(args.llm, args.judge, args.model))
@@ -72,7 +78,7 @@ def main() -> None:
     if args.llm == "anthropic" and args.model:
         header += f"  model={args.model}"
     print(header)
-    print(report.render())
+    print(report.render(verbose=args.verbose))
 
 
 if __name__ == "__main__":
