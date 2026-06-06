@@ -20,9 +20,26 @@ from racore.eval.harness import HarnessReport, demo_pipeline, run
 from racore.eval.metrics import default_evaluators
 
 if TYPE_CHECKING:
-    from racore.core.pipeline import Pipeline
+    from collections.abc import Callable
 
-_JUDGES = {"substring": SubstringEntailmentJudge, "overlap": TokenOverlapEntailmentJudge}
+    from racore.core.pipeline import Pipeline
+    from racore.core.ports import EntailmentJudge
+
+_JUDGES: dict[str, Callable[[], EntailmentJudge]] = {
+    "substring": SubstringEntailmentJudge,
+    "overlap": TokenOverlapEntailmentJudge,
+}
+
+
+def _make_judge(judge_kind: str, model: str | None) -> EntailmentJudge:
+    """Build the selected entailment judge. 'llm' is opt-in and lazily imports the SDK."""
+    if judge_kind == "llm":
+        from racore.adapters.judge_anthropic import AnthropicEntailmentJudge
+        from racore.adapters.llm_anthropic import AnthropicConfig
+
+        config = AnthropicConfig(model=model) if model else AnthropicConfig()
+        return AnthropicEntailmentJudge(config)
+    return _JUDGES[judge_kind]()
 
 
 def _build_pipeline(
@@ -33,7 +50,7 @@ def _build_pipeline(
     embed_model: str | None = None,
 ) -> Pipeline:
     """Start from the $0 stack and swap only the embedder/LLM/judge that were selected."""
-    pipeline = dataclasses.replace(demo_pipeline(), judge=_JUDGES[judge_kind]())
+    pipeline = dataclasses.replace(demo_pipeline(), judge=_make_judge(judge_kind, model))
     if embedder_kind == "voyage":
         # Lazy import keeps the SDK optional — the mock path never reaches here.
         from racore.adapters.embeddings_voyage import VoyageConfig, VoyageEmbeddingProvider
@@ -84,14 +101,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--judge",
-        choices=["substring", "overlap"],
+        choices=["substring", "overlap", "llm"],
         default="substring",
-        help="entailment judge: 'substring' (exact, default) or 'overlap' (paraphrase-tolerant).",
+        help="entailment judge: 'substring' (exact, default), 'overlap' (paraphrase-tolerant), "
+        "or 'llm' (semantic, opt-in — uses Claude to decide entailment).",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="override the provider model id (anthropic only), e.g. claude-haiku-4-5.",
+        help="override the Anthropic model id (used by --llm anthropic and --judge llm), "
+        "e.g. claude-haiku-4-5.",
     )
     parser.add_argument(
         "-v",

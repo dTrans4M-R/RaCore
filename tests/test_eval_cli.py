@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from racore.adapters.embeddings import MockEmbeddingProvider
 from racore.adapters.embeddings_voyage import VoyageEmbeddingProvider
+from racore.adapters.judge_anthropic import AnthropicEntailmentJudge
 from racore.adapters.judges import SubstringEntailmentJudge, TokenOverlapEntailmentJudge
 from racore.adapters.llm import ExtractiveLLM
 from racore.adapters.llm_anthropic import AnthropicLLM
@@ -34,3 +35,11 @@ def test_voyage_selection_swaps_embedder_without_importing_sdk() -> None:
     pipeline = _build_pipeline("mock", "substring", embedder_kind="voyage")
     assert isinstance(pipeline.embedder, VoyageEmbeddingProvider)
     assert isinstance(pipeline.llm, ExtractiveLLM)  # only the embedder was swapped
+
+
+def test_llm_judge_selection_swaps_judge_without_importing_sdk() -> None:
+    # 'llm' builds the Claude-backed entailment judge; the SDK loads lazily only when a client is
+    # built, so selection is safe on a clean install.
+    pipeline = _build_pipeline("mock", "llm")
+    assert isinstance(pipeline.judge, AnthropicEntailmentJudge)
+    assert isinstance(pipeline.llm, ExtractiveLLM)  # only the judge was swapped

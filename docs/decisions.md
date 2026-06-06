@@ -169,3 +169,24 @@ behind the same port with zero core change, exactly as `AnthropicLLM` is one of 
 core stays dependency-free; only `racore[voyage]` pulls the SDK (and its numpy/pillow deps). The
 nDCG@k / MRR lift is measured by an opt-in `--embedder voyage` run (needs `VOYAGE_API_KEY`). Embedding
 *cost* accounting is deferred — the port returns vectors, not usage — and noted for a later slice.
+
+### ADR-0017 — LLM entailment judge (Claude) behind the `EntailmentJudge` port
+**Context:** the deterministic ``$0`` judges are *lexical*, so on a paraphrasing model they
+**understate the headline faithfulness metric**. Measured on a real Claude run: correct, grounded
+answers score **0.0** — p1 "Mercury is the **world** that sits closest to our **star**" and p5
+"Europa might hold an **underground sea**" are entailed by the evidence ("closest to the **Sun**",
+"hide a salty **ocean**") but share too few words for substring or token-overlap to credit them.
+ADR-0012 left the `EntailmentJudge` port pluggable for exactly this. **Decision:** add
+`AnthropicEntailmentJudge` as the first *semantic* judge behind the port — a per-claim
+SUPPORTED/UNSUPPORTED verdict from Claude (`max_tokens=8`), batched, with an **uncited-claim
+short-circuit** (no call, no cost, matching the deterministic judges), reusing the Anthropic client
+plumbing; optional extra, lazy SDK, offline-testable; selected via `--judge llm`. The strict
+substring judge stays the **default** (the un-foolable floor). **Consequences:** faithfulness can now
+be judged on *meaning*, so the lexical understatement (p1/p5 = 0.0) should resolve to supported —
+**validated against the golden set** on a real `--judge llm` run. Provider-agnostic: an OpenAI/local
+judge is a drop-in behind the same port (not a lock-in). LLM-as-judge brings its own validity
+question (does it agree with ground truth?) — which is why the deterministic judges remain as the
+honest floor and the golden set is the check. **Cost caveat:** the judge makes per-claim LLM calls
+that, like Voyage embeddings, are **not yet priced** into cost/answer — the `EntailmentJudge` /
+`EmbeddingProvider` ports return verdicts / vectors, not usage; only the generator's tokens are
+priced today. Surfacing and pricing component usage is the next measurement-integrity slice.

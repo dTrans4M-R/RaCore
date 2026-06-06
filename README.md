@@ -150,6 +150,24 @@ shows tokens with `cost n/a` rather than a fake $0. Cost accounting is provider-
 that fills in `LLMResponse.usage` is priced the same way; supporting a new provider is a table entry,
 not a code change. Add `-v` for per-case detail (which question, the answer, the unsupported claims).
 
+> **Known limitation (being fixed next):** cost/answer currently prices only the **generator's**
+> tokens. A paid **embedder** (`--embedder voyage`) or **judge** (`--judge llm`) is *not yet* counted,
+> so a paid run's cost is understated — and a `$0`-LLM + Voyage run reports `$0.000000` even though
+> Voyage bills. The `EmbeddingProvider`/`EntailmentJudge` ports return vectors/verdicts, not usage;
+> surfacing and pricing that is the next measurement-integrity slice. (The `$0` default stack is
+> genuinely free, so this only affects opt-in paid runs.)
+
+**Verifying grounding semantically (opt-in).** The lexical judges (`substring`, `overlap`) can't
+credit a faithful paraphrase — "Mercury is the *world* closest to our *star*" is grounded by "…closest
+to the *Sun*" but scores 0.0. The `llm` judge uses Claude to decide entailment on *meaning*:
+
+```bash
+uv run --extra anthropic --env-file .env python -m racore.eval --llm anthropic --judge llm -v
+```
+
+It's one adapter behind the same `EntailmentJudge` port as the deterministic judges (ADR-0017); the
+strict `substring` judge stays the default floor.
+
 ### Upgrading retrieval with a real embedder (opt-in)
 
 The `$0` embedder is purely lexical (shared-vocabulary cosine), so it buries answer docs that

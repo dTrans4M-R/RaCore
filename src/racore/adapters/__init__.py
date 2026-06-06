@@ -14,6 +14,7 @@ from __future__ import annotations
 from racore.adapters.chunkers import FixedWindowChunker
 from racore.adapters.embeddings import MockEmbeddingProvider
 from racore.adapters.embeddings_voyage import VoyageConfig, VoyageEmbeddingProvider
+from racore.adapters.judge_anthropic import AnthropicEntailmentJudge
 from racore.adapters.judges import SubstringEntailmentJudge, TokenOverlapEntailmentJudge
 from racore.adapters.llm import ExtractiveLLM
 from racore.adapters.llm_anthropic import AnthropicConfig, AnthropicLLM
@@ -24,6 +25,7 @@ from racore.adapters.vectorstores import InMemoryVectorStore
 
 __all__ = [
     "AnthropicConfig",
+    "AnthropicEntailmentJudge",
     "AnthropicLLM",
     "ExtractiveLLM",
     "FileMemoryStore",
