@@ -44,8 +44,14 @@ here, never in a consumer repo. See [`CLAUDE.md`](CLAUDE.md) for the house rules
 
 ## Status
 
-**Phase 0 — Foundation (scaffolding).** Guardrails, tooling, and the repo structure are in place;
-the walking skeleton (the first end-to-end slice) is the next step. Build order and per-phase
+**Phase 0 — Foundation: the walking skeleton is live.** A thin end-to-end slice runs through the
+real ports at **$0** external spend — ingest → retrieve → rerank → ground → cite → answer — with
+per-stage timing (ADR-0010) and content-hash IDs (ADR-0011), plus an eval harness that prints a
+baseline over a golden set.
+
+On the golden set today: **retrieval hit@k, grounding faithfulness, and answer correctness are all
+1.0**; refusal accuracy is intentionally **below 1.0** — Phase 0 has no abstention logic yet, so the
+harness *surfaces* that gap for Phase 2 to close rather than hiding it. Build order and per-phase
 "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
@@ -61,10 +67,38 @@ the walking skeleton (the first end-to-end slice) is the next step. Build order 
 1. **Python 3.12+** and [`uv`](https://docs.astral.sh/uv/). Node 20+ later for the demo UI.
 2. `uv sync` — creates the venv and installs the dev toolchain (ruff, mypy, pytest, pre-commit).
 3. `uv run pre-commit install` — activates the commit-time quality gate.
-4. `uv run pytest` — runs the test suite (smoke test today; the E2E slice after Phase 0).
-5. Phase 0 produces the walking skeleton: `core/` types + ports + pipeline, an in-memory adapter
-   set (so it runs at **$0**), the eval-harness stub, and one passing end-to-end test
-   (ingest → retrieve → ground → cite → answer) that prints a **baseline** number.
+4. `uv run pytest` — runs the test suite (green).
+5. `uv run python -m racore.eval` — ingests the golden corpus and prints the baseline metrics.
+
+### Quickstart (ingest → ask → grounded answer)
+
+```python
+import asyncio
+
+from racore.adapters import InMemoryDocumentSource
+from racore.core.types import Query
+from racore.eval import demo_pipeline
+
+
+async def main() -> None:
+    pipeline = demo_pipeline()  # deterministic, $0 in-memory adapter stack
+    await pipeline.ingest(
+        InMemoryDocumentSource(
+            [("notes/saturn", "Saturn is famous for its prominent ring system made of ice.")]
+        )
+    )
+    answer = await pipeline.answer(Query(text="What is Saturn famous for?"))
+    print(answer.text)
+    for citation in answer.citations:
+        print(f"  [{citation.marker}] {citation.evidence.source}: {citation.evidence.quote}")
+
+
+asyncio.run(main())
+```
+
+Swap any adapter (embeddings, vector store, reranker, LLM, …) for a real provider without touching
+the core — that boundary is the ports-and-adapters design in
+[`docs/architecture.md`](docs/architecture.md).
 
 ## License
 

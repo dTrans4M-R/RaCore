@@ -1,0 +1,110 @@
+"""Evaluators — one per metric, each satisfying the ``Evaluator`` port.
+
+They cover the layers of ``docs/evaluation.md`` §2 that Phase 0 can measure: retrieval
+hit-rate, grounding faithfulness, answer correctness, and refusal accuracy. Each returns a
+single ``EvalResult`` with a score in ``[0, 1]`` plus supporting detail. Keeping retrieval,
+grounding, and answer separate is deliberate: a good final answer can hide a broken
+retriever, and vice versa.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from racore.core.types import EvalCase, EvalResult
+
+if TYPE_CHECKING:
+    from racore.core.ports import Evaluator
+
+
+class RetrievalEvaluator:
+    """Hit@k: for answerable rows, did the expected source appear in the retrieved set?"""
+
+    name = "retrieval.hit@k"
+
+    async def evaluate(self, cases: list[EvalCase]) -> EvalResult:
+        hits = [
+            any(r.chunk.source == case.row.expected_source for r in case.answer.retrievals)
+            for case in cases
+            if case.row.answerable
+        ]
+        return EvalResult(
+            name=self.name,
+            score=_mean(hits),
+            details={"answerable_cases": float(len(hits))},
+        )
+
+
+class FaithfulnessEvaluator:
+    """The headline metric: fraction of answer claims backed by a cited span."""
+
+    name = "grounding.faithfulness"
+
+    async def evaluate(self, cases: list[EvalCase]) -> EvalResult:
+        scores = [case.answer.grounding.faithfulness for case in cases if not case.answer.abstained]
+        faithfulness = _mean(scores)
+        return EvalResult(
+            name=self.name,
+            score=faithfulness,
+            details={
+                "answered_cases": float(len(scores)),
+                "unsupported_claim_rate": round(1.0 - faithfulness, 4),
+            },
+        )
+
+
+class AnswerCorrectnessEvaluator:
+    """Correctness: does the expected answer appear in the produced answer text?"""
+
+    name = "answer.correctness"
+
+    async def evaluate(self, cases: list[EvalCase]) -> EvalResult:
+        correct = [
+            _normalize(case.row.expected_answer) in _normalize(case.answer.text)
+            for case in cases
+            if case.row.answerable
+        ]
+        return EvalResult(
+            name=self.name,
+            score=_mean(correct),
+            details={"answerable_cases": float(len(correct))},
+        )
+
+
+class RefusalEvaluator:
+    """Refusal accuracy + the damaging false-answer-on-no-evidence rate."""
+
+    name = "refusal.accuracy"
+
+    async def evaluate(self, cases: list[EvalCase]) -> EvalResult:
+        correct = [case.answer.abstained == (not case.row.answerable) for case in cases]
+        false_answers = [not case.answer.abstained for case in cases if not case.row.answerable]
+        return EvalResult(
+            name=self.name,
+            score=_mean(correct),
+            details={
+                "negative_controls": float(len(false_answers)),
+                "false_answer_on_no_evidence_rate": _mean(false_answers, default=0.0),
+            },
+        )
+
+
+def default_evaluators() -> list[Evaluator]:
+    """The standard Phase 0 evaluator panel."""
+    return [
+        RetrievalEvaluator(),
+        FaithfulnessEvaluator(),
+        AnswerCorrectnessEvaluator(),
+        RefusalEvaluator(),
+    ]
+
+
+def _mean(values: list[bool] | list[float], default: float = 1.0) -> float:
+    """Mean of ``values``; ``default`` when empty (vacuously true by default)."""
+    if not values:
+        return default
+    return sum(float(value) for value in values) / len(values)
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.lower().split())

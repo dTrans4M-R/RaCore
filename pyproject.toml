@@ -41,7 +41,7 @@ select = [
     "UP",           # pyupgrade
     "B",            # bugbear
     "SIM",          # simplify
-    "TC",           # type-checking imports
+    "TC",           # type-checking imports (keep type-only imports out of runtime)
     "RUF",          # ruff-specific
 ]
 
