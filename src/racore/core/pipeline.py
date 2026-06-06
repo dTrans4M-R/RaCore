@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from racore.core import grounding
+from racore.core.ports import UsageReporter
 from racore.core.types import (
     Answer,
     EmbeddedChunk,
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
         Reranker,
         VectorStore,
     )
-    from racore.core.types import LLMResponse, MemoryItem, Query
+    from racore.core.types import LLMResponse, MemoryItem, Query, TokenUsage
 
 _SYSTEM = (
     "Answer the question using only the numbered evidence provided. Cite each claim with "
@@ -115,6 +116,9 @@ class Pipeline:
             vectors = await self.embedder.embed([c.text for c in chunks], InputType.DOCUMENT)
 
         embedded = [EmbeddedChunk(chunk=c, vector=v) for c, v in zip(chunks, vectors, strict=True)]
+        # Discard ingest-time embedding usage: cost/answer is per-answer. Draining here keeps the
+        # embedder's meter clean so the first answer doesn't absorb the corpus's embed cost.
+        _drain(self.embedder)
 
         with sw.stage("upsert"):
             await self.store.upsert(embedded, tenant_id)
@@ -139,6 +143,9 @@ class Pipeline:
 
         with sw.stage("embed"):
             (query_vector,) = await self.embedder.embed([search_text], InputType.QUERY)
+        query_usages = _drain(
+            self.embedder
+        )  # this answer's query-embed cost (ingest already drained)
 
         with sw.stage("retrieve"):
             candidates = await self.store.search(
@@ -156,6 +163,7 @@ class Pipeline:
                 timings=sw.timings,
                 retrievals=(),
                 abstained=True,
+                usages=tuple(query_usages),  # the query embed still cost something
             )
 
         with sw.stage("assemble"):
@@ -176,13 +184,16 @@ class Pipeline:
             with sw.stage("memory.write"):
                 await self.memory.write(query.tenant_id, query.user_id, _learn(query, response))
 
+        # Sum every billed component this answer touched: query embed, the generator, and the judge.
+        generator_usage = [response.usage] if response.usage is not None else []
+        usages = (*query_usages, *generator_usage, *_drain(self.judge))
         return Answer(
             text=outcome.text,
             citations=outcome.citations,
             grounding=outcome.report,
             timings=sw.timings,
             retrievals=tuple(ranked),
-            usage=response.usage,
+            usages=usages,
             abstained=_is_refusal(response.text),
         )
 
@@ -211,3 +222,12 @@ def _is_refusal(text: str) -> bool:
     scored as an ungrounded answer (ADR-0013). It is a heuristic on the phrasing the system
     prompt mandates — Phase 2 replaces it with a robust abstention decision."""
     return _REFUSAL_RE.match(text) is not None
+
+
+def _drain(component: object) -> list[TokenUsage]:
+    """Drain a component's accumulated token usage if it bills (the optional ``UsageReporter``
+    port, ADR-0018). Free adapters don't implement it and contribute nothing, so the $0 stack
+    reports a true $0 and the harness can price every paid component, not just the generator."""
+    if isinstance(component, UsageReporter):
+        return component.drain_usage()
+    return []

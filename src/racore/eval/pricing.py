@@ -1,9 +1,11 @@
 """Per-model token pricing for the harness's cost accounting.
 
-USD per million tokens (input, output) at base Claude API rates — no prompt-cache or Batch
-discounts. Verified against platform.claude.com/docs/en/docs/about-claude/pricing on
-2026-06-07; update when prices change. A model with no entry yields a cost of ``None`` so the
-harness reports tokens only and never prints a misleading $0 for a paid run.
+USD per million tokens (input, output) at base public API rates — no prompt-cache or Batch
+discounts. Claude generation/judge rates verified against
+platform.claude.com/docs/en/docs/about-claude/pricing, and Voyage embedding rates against
+docs.voyageai.com/docs/pricing, on 2026-06-07; update when prices change. Embedding models bill
+input tokens only, so their output rate is 0. A model with no entry yields a cost of ``None`` so
+the harness reports tokens only and never prints a misleading $0 for a paid run.
 """
 
 from __future__ import annotations
@@ -26,6 +28,12 @@ PRICES: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-haiku-3-5": (0.80, 4.0),
+    # Voyage AI embeddings (input-only; output rate 0). Longest-prefix match disambiguates the
+    # 3.5 / 3.5-lite / 3-large variants from the bare "voyage-3".
+    "voyage-3-large": (0.18, 0.0),
+    "voyage-3.5-lite": (0.02, 0.0),
+    "voyage-3.5": (0.06, 0.0),
+    "voyage-3": (0.06, 0.0),
 }
 
 

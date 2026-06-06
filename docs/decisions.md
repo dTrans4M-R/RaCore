@@ -190,3 +190,24 @@ honest floor and the golden set is the check. **Cost caveat:** the judge makes p
 that, like Voyage embeddings, are **not yet priced** into cost/answer — the `EntailmentJudge` /
 `EmbeddingProvider` ports return verdicts / vectors, not usage; only the generator's tokens are
 priced today. Surfacing and pricing component usage is the next measurement-integrity slice.
+
+### ADR-0018 — Honest cost accounting across all billed components (optional `UsageReporter`)
+**Context:** cost/answer priced only the **generator** (`LLMResponse.usage`). Once a paid embedder
+(Voyage) and judge (LLM) landed, a paid run **understated** cost and a `$0`-LLM + Voyage run reported a
+misleading **$0.000000** — violating the "never a fake $0 on a paid run" principle, which matters
+because honest measurement *is* the moat. The I/O ports return vectors/verdicts, not usage, and
+ADR-0009 froze those batch-first signatures. **Decision:** add an **optional** `UsageReporter` port
+(`drain_usage() -> list[TokenUsage]`, `runtime_checkable`), *separate* from the I/O ports so the frozen
+signatures don't change. Billed adapters (`VoyageEmbeddingProvider`, `AnthropicEntailmentJudge`)
+accumulate per-call usage and expose `drain_usage()`; the free `$0` adapters don't implement it. The
+pipeline drains its embedder (per query) and judge after each answer, folds them with the generator's
+usage into **`Answer.usages`** (replacing the single `Answer.usage`); `ingest()` drains the embedder so
+per-answer accounting doesn't absorb the corpus's one-time embed cost. The harness **sums and prices
+every component per answer**; if *any* billed component's model is unpriced, the whole figure is `None`
+(n/a), never a partial $0. Voyage embedding prices were added to the table (input-only). **Consequences:**
+cost/answer is now honest across generator + embedder + judge; the `$0` default stays a true $0 (free
+adapters report nothing). Adding a new paid component = implement `UsageReporter` + a price-table row,
+no core change. A provider with no price entry shows tokens with cost n/a, not a fake $0. The drain
+pattern is stateful but contained (the harness answers sequentially; appends within one call are
+asyncio-safe). Ingest-time embedding cost is currently discarded (cost/answer is per-answer); tracking
+it is a later addition.

@@ -22,8 +22,9 @@ _HAS_VOYAGE = importlib.util.find_spec("voyageai") is not None
 
 
 class _FakeResult:
-    def __init__(self, embeddings: list[list[float]]) -> None:
+    def __init__(self, embeddings: list[list[float]], total_tokens: int = 0) -> None:
         self.embeddings = embeddings
+        self.total_tokens = total_tokens
 
 
 class _FakeAsyncClient:
@@ -35,7 +36,8 @@ class _FakeAsyncClient:
 
     async def embed(self, texts: list[str], *, model: str, input_type: str | None) -> _FakeResult:
         self.calls.append((len(texts), model, input_type))
-        return _FakeResult([[float(len(t)), 1.0] for t in texts])
+        # total_tokens scales with the batch so the usage assertion below is meaningful.
+        return _FakeResult([[float(len(t)), 1.0] for t in texts], total_tokens=len(texts) * 5)
 
 
 def test_embed_returns_one_vector_per_text_in_a_single_batched_call() -> None:
@@ -51,6 +53,26 @@ async def _embed_batch() -> None:
     assert vectors == [(2.0, 1.0), (3.0, 1.0)]
     # Batch-first: the whole list goes in one call, with the document input_type mapped to wire.
     assert client.calls == [(2, "voyage-3.5", "document")]
+
+
+def test_embed_records_drainable_token_usage() -> None:
+    asyncio.run(_usage_case())
+
+
+async def _usage_case() -> None:
+    client = _FakeAsyncClient()
+    provider = VoyageEmbeddingProvider(VoyageConfig(model="voyage-3.5"), client=client)
+
+    await provider.embed(["aa", "bbb"], InputType.DOCUMENT)  # total_tokens = 2 * 5 = 10
+    drained = provider.drain_usage()
+
+    assert len(drained) == 1
+    # Embeddings bill input only; the model tags it for pricing.
+    assert (drained[0].input_tokens, drained[0].output_tokens) == (10, 0)
+    assert drained[0].model == "voyage-3.5"
+    assert (
+        provider.drain_usage() == []
+    )  # draining resets, so per-answer accounting doesn't double-count
 
 
 def test_query_and_document_input_types_map_to_voyage_wire_values() -> None:

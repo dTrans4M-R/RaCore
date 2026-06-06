@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
-from racore.core.types import InputType
+from racore.core.types import InputType, TokenUsage
 
 if TYPE_CHECKING:
     from typing import Any
@@ -49,6 +49,9 @@ class _EmbeddingsResult(Protocol):
     @property
     def embeddings(self) -> list[list[float]]: ...
 
+    @property
+    def total_tokens(self) -> int: ...
+
 
 class _AsyncClient(Protocol):
     """The sliver of the Voyage async client this adapter uses — so the real SDK client and a
@@ -67,6 +70,7 @@ class VoyageEmbeddingProvider:
     ) -> None:
         self._config = config or VoyageConfig()
         self._client: _AsyncClient | None = client
+        self._usage: list[TokenUsage] = []
 
     async def embed(self, texts: list[str], input_type: InputType) -> list[Vector]:
         if not texts:  # an empty batch needs no client, key, or network round-trip.
@@ -75,7 +79,16 @@ class VoyageEmbeddingProvider:
         result = await client.embed(
             texts, model=self._config.model, input_type=_INPUT_TYPE.get(input_type)
         )
+        # Embeddings bill input tokens only (no output); record so the harness can price the run.
+        self._usage.append(
+            TokenUsage(input_tokens=result.total_tokens, output_tokens=0, model=self._config.model)
+        )
         return [tuple(vector) for vector in result.embeddings]
+
+    def drain_usage(self) -> list[TokenUsage]:
+        """Usage accumulated since the last drain; resets on read (the ``UsageReporter`` port)."""
+        drained, self._usage = self._usage, []
+        return drained
 
     def _client_or_build(self) -> _AsyncClient:
         if self._client is None:

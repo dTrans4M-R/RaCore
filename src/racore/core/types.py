@@ -233,7 +233,10 @@ class Answer:
     timings: tuple[StageTiming, ...]
     retrievals: tuple[Retrieval, ...] = ()
     abstained: bool = False
-    usage: TokenUsage | None = None  # token cost of the generate call, if the provider reports it.
+    # Token usage of *every* billed component this answer used — the generator plus any paid
+    # embedder/judge that report usage (ADR-0018). Empty for the $0 stack. The harness sums and
+    # prices these so cost/answer is honest, not generator-only.
+    usages: tuple[TokenUsage, ...] = ()
 
     async def stream(self) -> AsyncIterator[str]:
         """Yield the answer as text deltas.

@@ -15,7 +15,7 @@ exist would mean rewriting every adapter and caller:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         LLMResponse,
         MemoryItem,
         Retrieval,
+        TokenUsage,
         Vector,
     )
 
@@ -114,3 +115,19 @@ class Evaluator(Protocol):
     name: str
 
     async def evaluate(self, cases: list[EvalCase]) -> EvalResult: ...
+
+
+@runtime_checkable
+class UsageReporter(Protocol):
+    """*Optional* capability: an adapter that bills can report (and reset) the token usage of the
+    calls it has made since the last drain.
+
+    It is deliberately **not** part of the I/O ports — adding usage to ``embed`` / ``judge`` return
+    types would break the frozen batch-first signatures (ADR-0009). Instead the pipeline drains its
+    embedder and judge after each answer and folds the result into ``Answer.usages``, so cost/answer
+    counts *every* paid component, not just the generator. The free ``$0`` adapters don't implement
+    it, so they contribute nothing and the demo stays a true $0. ``runtime_checkable`` so the
+    pipeline can ``isinstance``-test a component before draining it.
+    """
+
+    def drain_usage(self) -> list[TokenUsage]: ...

@@ -164,30 +164,40 @@ async def run(
     results = tuple([await evaluator.evaluate(cases) for evaluator in evaluators])
 
     latencies = sorted(case.answer.total_millis for case in cases)
-    usages = [case.answer.usage for case in cases if case.answer.usage is not None]
+    per_answer_usages = [case.answer.usages for case in cases]
     return HarnessReport(
         n_cases=len(cases),
         results=results,
         latency_p50_ms=_percentile(latencies, 50.0),
         latency_p95_ms=_percentile(latencies, 95.0),
         latency_mean_ms=_mean(latencies),
-        cost_per_answer_usd=_cost_per_answer(usages),
+        cost_per_answer_usd=_cost_per_answer(per_answer_usages),
         stage_millis=_stage_means(cases),
-        tokens_in_per_answer=_mean([float(u.input_tokens) for u in usages]),
-        tokens_out_per_answer=_mean([float(u.output_tokens) for u in usages]),
+        tokens_in_per_answer=_mean([_sum_tokens(u, "input") for u in per_answer_usages]),
+        tokens_out_per_answer=_mean([_sum_tokens(u, "output") for u in per_answer_usages]),
         per_case=tuple(_case_outcome(case) for case in cases),
     )
 
 
-def _cost_per_answer(usages: list[TokenUsage]) -> float | None:
-    """Mean USD/answer from real usage. ``0.0`` when nothing was billed (the $0 stack reports
-    no usage); ``None`` when a billed model has no entry in the price table — never a fake $0."""
-    if not usages:
-        return 0.0
-    costs = [cost_usd(usage) for usage in usages]
-    if any(cost is None for cost in costs):
-        return None
-    return _mean([cost for cost in costs if cost is not None])
+def _sum_tokens(usages: tuple[TokenUsage, ...], side: str) -> float:
+    """Total input or output tokens an answer spent across all its billed components."""
+    return float(sum(u.input_tokens if side == "input" else u.output_tokens for u in usages))
+
+
+def _cost_per_answer(per_answer_usages: list[tuple[TokenUsage, ...]]) -> float | None:
+    """Mean USD/answer, **summed across every billed component** (generator + any paid embedder or
+    judge, ADR-0018). ``0.0`` when nothing was billed (the $0 stack reports no usage); ``None`` when
+    any billed component's model has no price-table entry — never a fake $0 on a paid run."""
+    answer_costs: list[float] = []
+    for usages in per_answer_usages:
+        total = 0.0
+        for usage in usages:
+            cost = cost_usd(usage)
+            if cost is None:
+                return None  # a billed component we can't price -> the whole figure is unknown
+            total += cost
+        answer_costs.append(total)
+    return _mean(answer_costs) if answer_costs else 0.0
 
 
 def _case_outcome(case: EvalCase) -> CaseOutcome:

@@ -150,12 +150,12 @@ shows tokens with `cost n/a` rather than a fake $0. Cost accounting is provider-
 that fills in `LLMResponse.usage` is priced the same way; supporting a new provider is a table entry,
 not a code change. Add `-v` for per-case detail (which question, the answer, the unsupported claims).
 
-> **Known limitation (being fixed next):** cost/answer currently prices only the **generator's**
-> tokens. A paid **embedder** (`--embedder voyage`) or **judge** (`--judge llm`) is *not yet* counted,
-> so a paid run's cost is understated — and a `$0`-LLM + Voyage run reports `$0.000000` even though
-> Voyage bills. The `EmbeddingProvider`/`EntailmentJudge` ports return vectors/verdicts, not usage;
-> surfacing and pricing that is the next measurement-integrity slice. (The `$0` default stack is
-> genuinely free, so this only affects opt-in paid runs.)
+Cost/answer counts **every billed component** — the generator, a paid embedder (`--embedder voyage`),
+and the LLM judge (`--judge llm`) — summed and priced from each one's reported token usage (ADR-0018).
+The `$0` default stack reports a **true $0**; if any paid component's model isn't in the price table,
+the figure shows **`n/a`** rather than a misleading $0. Billed adapters surface usage through an
+*optional* `UsageReporter` port, so the frozen batch-first I/O signatures stay unchanged and adding a
+new paid component is a price-table row plus that one method — never a core change.
 
 **Verifying grounding semantically (opt-in).** The lexical judges (`substring`, `overlap`) can't
 credit a faithful paraphrase — "Mercury is the *world* closest to our *star*" is grounded by "…closest
@@ -172,8 +172,8 @@ strict `substring` judge stays the default floor. On a real Haiku run the judge 
 from ≈ **0.78** (overlap, lexical) to ≈ **0.93–0.96** (llm, semantic) — meeting the ≥ 0.95 target
 ([`docs/evaluation.md`](docs/evaluation.md) §5), with `citation_correctness` ≈ 1.0. The small residual
 is a model citation-style quirk (a verbatim restatement left uncited), not a judging error — and the
-exact value wobbles with answer verbosity. The LLM judge adds latency (per-claim calls) and, like a
-real embedder, its tokens aren't yet priced (see the cost note above).
+exact value wobbles with answer verbosity. The LLM judge adds latency (per-claim calls); its tokens
+are counted in cost/answer alongside the generator and embedder (ADR-0018).
 
 ### Upgrading retrieval with a real embedder (opt-in)
 

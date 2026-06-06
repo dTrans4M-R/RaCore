@@ -18,11 +18,16 @@ import asyncio
 import re
 from typing import TYPE_CHECKING
 
-from racore.adapters.llm_anthropic import AnthropicConfig, _build_client, _extract_text
+from racore.adapters.llm_anthropic import (
+    AnthropicConfig,
+    _build_client,
+    _extract_text,
+    _extract_usage,
+)
 
 if TYPE_CHECKING:
     from racore.adapters.llm_anthropic import _Client
-    from racore.core.types import ClaimCheck
+    from racore.core.types import ClaimCheck, TokenUsage
 
 # One-word verdict so the call is tiny (max_tokens below) and cheap. The instruction is strict:
 # "supported" must be entailment, not mere topical relatedness, so the judge stays honest.
@@ -44,6 +49,7 @@ class AnthropicEntailmentJudge:
     ) -> None:
         self._config = config or AnthropicConfig()
         self._client: _Client | None = client
+        self._usage: list[TokenUsage] = []
 
     async def judge(self, checks: list[ClaimCheck]) -> list[bool]:
         # An uncited claim is unsupportable by construction (no evidence to entail it) — match the
@@ -63,7 +69,14 @@ class AnthropicEntailmentJudge:
             system=_VERDICT_SYSTEM,
             messages=[{"role": "user", "content": _render(check)}],
         )
+        # Record the verdict call's tokens so cost/answer counts the judge, not just the generator.
+        self._usage.append(_extract_usage(message, self._config.model))
         return _is_supported(_extract_text(message))
+
+    def drain_usage(self) -> list[TokenUsage]:
+        """Usage accumulated since the last drain; resets on read (the ``UsageReporter`` port)."""
+        drained, self._usage = self._usage, []
+        return drained
 
     def _client_or_build(self) -> _Client:
         if self._client is None:

@@ -31,9 +31,16 @@ class _FakeBlock:
         self.text = text
 
 
+class _FakeUsage:
+    def __init__(self, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
 class _FakeMessage:
     def __init__(self, text: str) -> None:
         self.content = [_FakeBlock(text)]
+        self.usage = _FakeUsage(30, 1)  # a verdict call: ~30 in, 1 out
 
 
 class _FakeMessages:
@@ -114,6 +121,31 @@ async def _all_uncited_case() -> None:
 
     assert verdicts == [False, False]
     assert client.messages.calls == []  # no key, no network when nothing is cited
+
+
+def test_judge_records_drainable_usage_for_cited_claims_only() -> None:
+    asyncio.run(_usage_case())
+
+
+async def _usage_case() -> None:
+    client = _FakeClient({"alpha": "SUPPORTED", "beta": "UNSUPPORTED"})
+    judge = AnthropicEntailmentJudge(AnthropicConfig(model="claude-haiku-4-5"), client=client)
+
+    await judge.judge(
+        [
+            ClaimCheck(claim="alpha", evidence=("ev",)),
+            ClaimCheck(claim="beta", evidence=("ev",)),
+            ClaimCheck(claim="uncited", evidence=()),  # no call -> no usage to record
+        ]
+    )
+    drained = judge.drain_usage()
+
+    assert len(drained) == 2  # one usage per cited claim; the uncited one cost nothing
+    assert all((u.input_tokens, u.output_tokens) == (30, 1) for u in drained)
+    assert all(u.model == "claude-haiku-4-5" for u in drained)
+    assert (
+        judge.drain_usage() == []
+    )  # draining resets, so per-answer accounting doesn't double-count
 
 
 def test_is_supported_parses_the_one_word_verdict() -> None:
