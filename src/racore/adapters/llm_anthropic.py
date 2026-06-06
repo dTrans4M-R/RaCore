@@ -35,8 +35,9 @@ _MARKER_RE = re.compile(r"\[(\d+)\]")
 
 # Used only if a request arrives without a system prompt; the pipeline always supplies one.
 _FALLBACK_SYSTEM = (
-    "Answer the question using only the numbered evidence provided. Cite each claim with its "
-    "evidence marker like [1]. If the evidence does not contain the answer, say you don't know."
+    "Answer the question using only the numbered evidence provided. Be concise: state each fact "
+    "once and end every sentence with the evidence marker that supports it, like [1]. Do not "
+    "restate the evidence. If the evidence does not contain the answer, say you don't know."
 )
 
 
@@ -124,7 +125,11 @@ def _render_prompt(request: LLMRequest) -> str:
     """Render the question and 1-indexed evidence into a single user turn the model can cite."""
     lines = [f"Question: {request.query}", "", "Evidence:"]
     lines.extend(f"[{i}] {ev.quote}" for i, ev in enumerate(request.context.evidences, start=1))
-    lines += ["", "Answer using only the evidence above; cite each claim with its [n] marker."]
+    lines += [
+        "",
+        "Answer concisely using only the evidence above. End every sentence with its supporting "
+        "[n] marker, and do not restate the evidence in an extra uncited sentence.",
+    ]
     return "\n".join(lines)
 
 

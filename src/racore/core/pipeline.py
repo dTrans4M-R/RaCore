@@ -49,9 +49,10 @@ if TYPE_CHECKING:
     from racore.core.types import LLMResponse, MemoryItem, Query, TokenUsage
 
 _SYSTEM = (
-    "Answer the question using only the numbered evidence provided. Cite each claim with "
-    "its evidence marker like [1]. If the evidence does not contain the answer, say you "
-    "don't know rather than guessing."
+    "Answer the question using only the numbered evidence provided. Be concise: state each fact "
+    "once, in its own sentence, and do not restate or pad the evidence. End every sentence with "
+    "the evidence marker that supports it, like [1] — every sentence must carry its own citation. "
+    "If the evidence does not contain the answer, say you don't know rather than guessing."
 )
 
 _ABSTAIN_TEXT = "I don't know — I couldn't find supporting evidence in the corpus."

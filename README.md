@@ -171,9 +171,10 @@ It's one adapter behind the same `EntailmentJudge` port as the deterministic jud
 strict `substring` judge stays the default floor. On a real Haiku run the judge lifts faithfulness
 from ≈ **0.78** (overlap, lexical) to ≈ **0.93–0.96** (llm, semantic) — meeting the ≥ 0.95 target
 ([`docs/evaluation.md`](docs/evaluation.md) §5), with `citation_correctness` ≈ 1.0. The small residual
-is a model citation-style quirk (a verbatim restatement left uncited), not a judging error — and the
-exact value wobbles with answer verbosity. The LLM judge adds latency (per-claim calls); its tokens
-are counted in cost/answer alongside the generator and embedder (ADR-0018).
+is a model citation-style quirk (a verbatim restatement left uncited), not a judging error. The
+generation prompt now asks for concise, **one-citation-per-sentence** answers to curb it (ADR-0019) —
+the parser stays strict, since an uncited claim genuinely *is* unsupported. The LLM judge adds latency
+(per-claim calls); its tokens are counted in cost/answer alongside the generator and embedder (ADR-0018).
 
 ### Upgrading retrieval with a real embedder (opt-in)
 

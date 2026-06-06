@@ -211,3 +211,24 @@ no core change. A provider with no price entry shows tokens with cost n/a, not a
 pattern is stateful but contained (the harness answers sequentially; appends within one call are
 asyncio-safe). Ingest-time embedding cost is currently discarded (cost/answer is per-answer); tracking
 it is a later addition.
+
+### ADR-0019 — Fix the faithfulness residual at the generation prompt, not the parser/judge
+**Context:** with the LLM judge, faithfulness landed at **0.93–0.96**, wobbling around the ≥0.95 target.
+The sole residual (Finding G) is the model appending a **verbatim restatement of the evidence as an
+uncited second sentence** (`"claim. [1] restatement."`): the inter-sentence marker is the *first*
+sentence's trailing citation, so the restatement is genuinely uncited and correctly scored
+unsupported. Two tempting "fixes" were **rejected**: (a) also attaching the leading marker to the
+*following* sentence — but `test_grounding`'s swap case (`"Mercury… [2] Jupiter… [1]"`) proves that
+wrong: it would hand the Jupiter sentence the `[2]` it never intended and make a *swapped* citation
+look correct; (b) crediting an uncited sentence because it appears verbatim in the evidence — the
+"pool every quote" anti-pattern ADR-0012 deliberately removed. The parser is right; the model simply
+left a claim uncited. **Decision:** fix it **upstream, at the generation prompt** — instruct the model
+to be concise, state each fact once, not restate the evidence, and **end every sentence with its
+supporting `[n]` marker**. Keep `_parse_claims` strict and the deterministic substring judge as the
+floor. **Consequences:** a verbose answer no longer bleeds faithfulness through an uncited restatement,
+so the headline metric should sit **stably ≥0.95** (validated on a real `--judge llm` run). The fix
+does **not** relax the metric — an uncited claim is still unsupported (`test_grounding`'s
+`test_uncited_claim_is_unsupported…` guards that); it improves the *generator's* citation discipline.
+Prompt effects are non-deterministic, so validation is **empirical** (the eval harness on a real
+model), not a unit test; the deterministic gate is unaffected because the `$0`/mock generators ignore
+the system prompt.
