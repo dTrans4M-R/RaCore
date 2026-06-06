@@ -13,6 +13,7 @@ dependencies = []
 # Opt-in provider adapters. The core stays dependency-free (ADR-0007); these are only
 # needed when you swap a real provider in behind a port. Pin the newest stable SDK.
 anthropic = ["anthropic>=0.107"]
+voyage = ["voyageai>=0.4"]
 
 [project.urls]
 # Repository = "https://github.com/<you>/RaCore"   # fill in when published
@@ -65,6 +66,13 @@ warn_unused_ignores = true
 # `Protocol`, so the core call path is fully checked regardless.
 [[tool.mypy.overrides]]
 module = "anthropic.*"
+ignore_missing_imports = true
+
+# Same optional-dependency pattern as `anthropic` above: `voyageai` is absent from the default
+# ($0) dev install, so its types are unknown when it isn't installed. The adapter is typed against
+# a local `Protocol`, so the core call path stays fully checked regardless.
+[[tool.mypy.overrides]]
+module = "voyageai.*"
 ignore_missing_imports = true
 
 # --- pytest ---

@@ -25,20 +25,37 @@ if TYPE_CHECKING:
 _JUDGES = {"substring": SubstringEntailmentJudge, "overlap": TokenOverlapEntailmentJudge}
 
 
-def _build_pipeline(llm_kind: str, judge_kind: str, model: str | None = None) -> Pipeline:
-    """Start from the $0 stack and swap only the LLM and/or judge that were selected."""
+def _build_pipeline(
+    llm_kind: str,
+    judge_kind: str,
+    model: str | None = None,
+    embedder_kind: str = "mock",
+    embed_model: str | None = None,
+) -> Pipeline:
+    """Start from the $0 stack and swap only the embedder/LLM/judge that were selected."""
     pipeline = dataclasses.replace(demo_pipeline(), judge=_JUDGES[judge_kind]())
-    if llm_kind == "anthropic":
+    if embedder_kind == "voyage":
         # Lazy import keeps the SDK optional — the mock path never reaches here.
+        from racore.adapters.embeddings_voyage import VoyageConfig, VoyageEmbeddingProvider
+
+        vconfig = VoyageConfig(model=embed_model) if embed_model else VoyageConfig()
+        pipeline = dataclasses.replace(pipeline, embedder=VoyageEmbeddingProvider(vconfig))
+    if llm_kind == "anthropic":
         from racore.adapters.llm_anthropic import AnthropicConfig, AnthropicLLM
 
         config = AnthropicConfig(model=model) if model else AnthropicConfig()
-        return dataclasses.replace(pipeline, llm=AnthropicLLM(config))
+        pipeline = dataclasses.replace(pipeline, llm=AnthropicLLM(config))
     return pipeline
 
 
-async def _run(llm_kind: str, judge_kind: str, model: str | None = None) -> HarnessReport:
-    pipeline = _build_pipeline(llm_kind, judge_kind, model)
+async def _run(
+    llm_kind: str,
+    judge_kind: str,
+    model: str | None = None,
+    embedder_kind: str = "mock",
+    embed_model: str | None = None,
+) -> HarnessReport:
+    pipeline = _build_pipeline(llm_kind, judge_kind, model, embedder_kind, embed_model)
     await pipeline.ingest(golden_source())
     return await run(pipeline, golden_dataset(), default_evaluators())
 
@@ -47,6 +64,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m racore.eval",
         description="Ingest the golden corpus and print the evaluation baseline.",
+    )
+    parser.add_argument(
+        "--embedder",
+        choices=["mock", "voyage"],
+        default="mock",
+        help="embedder: 'mock' (lexical, $0, default) or 'voyage' (real semantic, opt-in).",
+    )
+    parser.add_argument(
+        "--embed-model",
+        default=None,
+        help="override the embedding model id (voyage only), e.g. voyage-3-large.",
     )
     parser.add_argument(
         "--llm",
@@ -73,8 +101,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    report = asyncio.run(_run(args.llm, args.judge, args.model))
-    header = f"# llm={args.llm}  judge={args.judge}"
+    report = asyncio.run(_run(args.llm, args.judge, args.model, args.embedder, args.embed_model))
+    header = f"# embedder={args.embedder}  llm={args.llm}  judge={args.judge}"
+    if args.embedder == "voyage" and args.embed_model:
+        header += f"  embed_model={args.embed_model}"
     if args.llm == "anthropic" and args.model:
         header += f"  model={args.model}"
     print(header)

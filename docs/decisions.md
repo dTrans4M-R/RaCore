@@ -152,3 +152,20 @@ MRR 0.889** — the rank-aware pair sits *below* recall, surfacing the buried-bu
 hides. These are the gated numbers a reranker (and hybrid retrieval) must lift, and the reason the
 retriever is judged directly rather than through a forgiving generator. Graded (multi-level)
 relevance can extend nDCG later with no interface change.
+
+### ADR-0016 — Real embedding adapter (Voyage), opt-in behind the `EmbeddingProvider` port
+**Context:** the $0 `MockEmbeddingProvider` is purely lexical (shared-vocabulary cosine), so it buries
+answer documents that paraphrase the question — "closest to our **star**" never matches "closest to
+the **Sun**". That is the measurable gap (recall@k 0.940, nDCG@k 0.863) the retrieval-depth work
+exists to close, and ADR-0007 requires the $0 default to remain. A real *semantic* embedder is the
+first lever. **Decision:** add `VoyageEmbeddingProvider` as the first opt-in real embedder behind the
+`EmbeddingProvider` port — Voyage AI (Anthropic's recommended embeddings), pinned model `voyage-3.5`,
+shipped as an **optional extra** (`racore[voyage]`, `voyageai>=0.4`) with a lazy SDK import, a narrow
+async client `Protocol` (so it is fully typed and offline-testable with a fake client), and
+query/document `input_type` asymmetry. The mock stays the default; selection is `--embedder voyage`,
+mirroring `--llm anthropic`. **Consequences:** provider-agnostic, *not* a lock-in (ADR-0001) — Voyage
+is one adapter; OpenAI, Cohere, or a **local** embedder (Ollama `nomic-embed-text`, BGE) are drop-ins
+behind the same port with zero core change, exactly as `AnthropicLLM` is one of many LLM adapters. The
+core stays dependency-free; only `racore[voyage]` pulls the SDK (and its numpy/pillow deps). The
+nDCG@k / MRR lift is measured by an opt-in `--embedder voyage` run (needs `VOYAGE_API_KEY`). Embedding
+*cost* accounting is deferred — the port returns vectors, not usage — and noted for a later slice.

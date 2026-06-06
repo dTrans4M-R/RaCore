@@ -61,8 +61,10 @@ $0 generator only ever quotes the evidence it cites. Retrieval, by contrast, is 
 retriever reads **recall@k ≈ 0.94** (ADR-0014). The rank-aware view confirms the weakness recall
 hides — **nDCG@k ≈ 0.86, MRR ≈ 0.89**, both below recall, because the right doc is frequently
 retrieved but not ranked first (ADR-0015). Those are the numbers a real embedding adapter, hybrid
-retrieval, and a reranker must beat. Refusal accuracy is intentionally **below 1.0** — there is no
-abstention logic yet, so the
+retrieval, and a reranker must beat. The first of these — an opt-in **Voyage** semantic embedder —
+is now wired behind the `EmbeddingProvider` port (ADR-0016); run it with `--embedder voyage` to
+measure the lift, while the `$0` mock stays the default. Refusal accuracy is intentionally **below
+1.0** — there is no abstention logic yet, so the
 harness *surfaces* that gap for Phase 2 rather than hiding it. Build order and per-phase "definition
 of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -147,6 +149,26 @@ by a verified table (`eval/pricing.py`). The `$0` stack reports a true $0; a mod
 shows tokens with `cost n/a` rather than a fake $0. Cost accounting is provider-agnostic — any adapter
 that fills in `LLMResponse.usage` is priced the same way; supporting a new provider is a table entry,
 not a code change. Add `-v` for per-case detail (which question, the answer, the unsupported claims).
+
+### Upgrading retrieval with a real embedder (opt-in)
+
+The `$0` embedder is purely lexical (shared-vocabulary cosine), so it buries answer docs that
+paraphrase the question — "world/star" never matches "planet/Sun" (recall@k ≈ 0.94, nDCG@k ≈ 0.86).
+A real *semantic* embedder is a drop-in behind the `EmbeddingProvider` port; the first one is Voyage:
+
+```bash
+# put your key in the gitignored .env:  VOYAGE_API_KEY=pa-...
+uv run --extra voyage --env-file .env python -m racore.eval --embedder voyage -v
+# combine with a real generator if you like:
+uv run --extra voyage --extra anthropic --env-file .env \
+  python -m racore.eval --embedder voyage --llm anthropic --judge overlap -v
+```
+
+This is **not** a lock-in: Voyage is one adapter behind the port, exactly as `AnthropicLLM` is one of
+many LLM adapters. OpenAI, Cohere, or a **local model** (Ollama `nomic-embed-text`, BGE) drop in the
+same way with zero core change. The `$0` `MockEmbeddingProvider` stays the default; `--embedder voyage`
+opts in. Model and key are configurable via `VoyageConfig` (default `voyage-3.5`); override the model
+with `--embed-model <id>`. The core and the default test path never import the SDK (ADR-0016).
 
 ## License
 
