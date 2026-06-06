@@ -113,18 +113,21 @@ not that grounding is hard to fool. To challenge it with a real, *paraphrasing* 
 same `LLMProvider` port:
 
 ```bash
-uv sync --extra anthropic                    # install the optional Anthropic SDK (not a core dep)
-# put your key in a gitignored .env:  ANTHROPIC_API_KEY=sk-ant-...
-uv run --env-file .env python -m racore.eval --llm anthropic --judge substring
-uv run --env-file .env python -m racore.eval --llm anthropic --judge overlap
+# put your key in a gitignored .env first:  ANTHROPIC_API_KEY=sk-ant-...
+# `--extra anthropic` installs the optional SDK for the run (the core stays dependency-free);
+# `--env-file .env` loads the key. Same run, two judges:
+uv run --extra anthropic --env-file .env python -m racore.eval --llm anthropic --judge substring
+uv run --extra anthropic --env-file .env python -m racore.eval --llm anthropic --judge overlap
 ```
 
-The strict `substring` judge will surface a **faithfulness gap** (the model paraphrases instead of
-quoting); the paraphrase-tolerant `overlap` judge recovers much of it — the same number, two judges,
-showing why the entailment check is a port. The model and its params are configurable via
-`AnthropicConfig` (default `claude-haiku-4-5-20251001` and `temperature=0.0`, both pinned for
-reproducible eval); override the model per run with `--model <id>`. The core and the default test
-path never import the SDK.
+The strict `substring` judge surfaces the **faithfulness gap** — a real generator reformats sentences
+rather than quoting, so exact-match grounding collapses (faithfulness ≈ **0.0** on a Haiku run, the
+honest extreme). The paraphrase-tolerant `overlap` judge recovers most of it (faithfulness ≈ **0.75**,
+citation-correctness ≈ **0.86** on the same answers) — same numbers, two judges, which is exactly why
+the entailment check is a swappable port. (Illustrative; values move with the model and run.)
+Retrieval stays 1.0 throughout. The model and its params are configurable via `AnthropicConfig`
+(default `claude-haiku-4-5-20251001`, `temperature=0.0`, both pinned for reproducible eval); override
+per run with `--model <id>`. The core and the default test path never import the SDK.
 
 ## License
 
