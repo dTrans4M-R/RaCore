@@ -163,10 +163,17 @@ to the *Sun*" but scores 0.0. The `llm` judge uses Claude to decide entailment o
 
 ```bash
 uv run --extra anthropic --env-file .env python -m racore.eval --llm anthropic --judge llm -v
+# the full stack — best retrieval + real generator + semantic judge, all at once:
+uv run --extra voyage --extra anthropic --env-file .env python -m racore.eval --embedder voyage --llm anthropic --judge llm -v
 ```
 
 It's one adapter behind the same `EntailmentJudge` port as the deterministic judges (ADR-0017); the
-strict `substring` judge stays the default floor.
+strict `substring` judge stays the default floor. On a real Haiku run the judge lifts faithfulness
+from ≈ **0.78** (overlap, lexical) to ≈ **0.93–0.96** (llm, semantic) — meeting the ≥ 0.95 target
+([`docs/evaluation.md`](docs/evaluation.md) §5), with `citation_correctness` ≈ 1.0. The small residual
+is a model citation-style quirk (a verbatim restatement left uncited), not a judging error — and the
+exact value wobbles with answer verbosity. The LLM judge adds latency (per-claim calls) and, like a
+real embedder, its tokens aren't yet priced (see the cost note above).
 
 ### Upgrading retrieval with a real embedder (opt-in)
 
