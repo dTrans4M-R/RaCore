@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from racore.core.types import LLMResponse
 
@@ -102,7 +102,7 @@ class AnthropicLLM:
 def _build_client(config: AnthropicConfig) -> _Client:
     try:
         from anthropic import AsyncAnthropic
-    except ImportError as exc:  # pragma: no cover - exercised only without the optional extra
+    except ImportError as exc:
         raise RuntimeError(
             "The Anthropic adapter needs its SDK. Install the optional extra: "
             "pip install 'racore[anthropic]' (or `uv add anthropic`)."
@@ -113,8 +113,10 @@ def _build_client(config: AnthropicConfig) -> _Client:
         kwargs["api_key"] = config.api_key
     if config.base_url is not None:
         kwargs["base_url"] = config.base_url
-    client: _Client = AsyncAnthropic(**kwargs)
-    return client
+    # The real client is usable as ``_Client`` (it has ``messages.create``); cast past mypy's
+    # strictness about the precise SDK signature vs our permissive protocol. Keeps the gate green
+    # whether or not the optional extra is installed.
+    return cast("_Client", AsyncAnthropic(**kwargs))
 
 
 def _render_prompt(request: LLMRequest) -> str:
