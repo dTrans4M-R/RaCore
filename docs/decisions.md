@@ -113,3 +113,25 @@ no longer double-penalized (with a scripted-refusal pipeline both read 1.0). The
 baseline is unchanged (the extractive LLM never refuses). The heuristic could miss a reworded
 refusal or false-positive on an answer that literally opens "I don't know"; acceptable for a
 seed, hardened when Phase 2 builds a real abstention decision.
+
+### ADR-0014 — A harder eval corpus, a relevance-set golden schema, and recall@k
+**Context:** the Phase 0 golden corpus was 7 unambiguous docs; with `k=5` over 7 docs the
+retriever returned almost everything, so hit@k was a saturated 1.0 and a reranker or hybrid
+retriever would have **no measurable gap to close**. Retrieval depth (real embeddings, hybrid
+dense+sparse, reranking) is the remaining Phase 1 work, and "no change ships without a number"
+needs a corpus where ranking actually matters. **Decision:** (a) grow the golden corpus to ~28
+synthetic, public-domain Solar-System docs with deliberate **distractors** (docs that share a
+question's words without answering it) and **paraphrase-gap** questions (wording that diverges
+from the answer doc); (b) generalize the golden schema from a single `expected_source` to a
+`relevant_sources` **set**, so multi-source questions are expressible and graded judgments
+exist; (c) replace the rank-blind hit@k metric with **recall@k** over that set, keeping
+rank-weighted **nDCG@k / MRR** for the slice that lands the reranker; (d) surface per-case
+retrieval detail (recall, retrieved-vs-relevant) in the harness `-v` output. **Consequences:**
+the $0 baseline now reads **recall@k ≈ 0.94** and **answer.correctness ≈ 0.86** — a real,
+attributable gap (the lexical retriever buries some relevant docs below `k`, and a distractor
+often wins rank 1, so the extractive answer quotes the wrong doc), while grounding stays 1.0
+(the extractive generator grounds in whatever it cites). Those two numbers are the targets a
+real embedding adapter, hybrid retrieval, and a reranker must beat. Relevance judgments are
+content-defensible — a doc is marked relevant only if it states the fact. Behaviour tests that
+need perfect retrieval (refusal recording) use a small focused fixture, not the hard set, so
+each test exercises one thing.

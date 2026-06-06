@@ -38,8 +38,13 @@ mis-scored — which is what this records.)
 
 ## 3. Datasets
 
-- **Golden set** — hand-built `(question, expected_answer, supporting_source_span)` rows. Start with
-  10–30; grow over time. This is your regression bedrock.
+- **Golden set** — hand-built `(question, expected_answer, relevant_sources)` rows, where
+  `relevant_sources` is the *set* of documents that should be retrieved (one for a single-fact row,
+  several for a multi-source row). This is your regression bedrock. It is deliberately **not** an easy
+  corpus: it carries **distractors** (docs that share a question's words without answering it) and
+  **paraphrase-gap** questions (wording that diverges from the answer doc), so retrieval is non-trivial
+  and recall@k / answer-correctness have real headroom for hybrid retrieval and reranking to close
+  (ADR-0014). Today's $0 baseline: recall@k ≈ 0.94, answer-correctness ≈ 0.86, grounding 1.0.
 - **Public benchmarks** — for the contracts/financial corpus, **CUAD** (contract clause QA) is a
   strong fit; add a small financial-QA set for numbers. Use them to sanity-check against the field.
 - **Negative controls** — questions whose answer is **not** in the corpus. The system must **abstain**,

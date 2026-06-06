@@ -288,16 +288,21 @@ class MemoryItem:
 
 @dataclass(frozen=True, slots=True)
 class GoldenRow:
-    """One row of the golden dataset: a question with its expected answer and source.
+    """One row of the golden dataset: a question, its expected answer, and the sources
+    relevant to it.
 
-    ``answerable=False`` marks a negative control — the corpus does not contain the
-    answer, so the system must abstain rather than fabricate (see ``docs/evaluation.md``).
+    ``relevant_sources`` is the ground-truth set the retrieval metrics score against —
+    one source label for a single-fact row, several for a multi-source row. It is a set,
+    not a single value, so recall@k now (and rank-weighted nDCG@k / MRR next) have the
+    judgments they need. ``answerable=False`` marks a negative control — the corpus does
+    not contain the answer, so ``relevant_sources`` is empty and the system must abstain
+    rather than fabricate (see ``docs/evaluation.md``).
     """
 
     id: str
     question: str
     expected_answer: str
-    expected_source: str
+    relevant_sources: tuple[str, ...]
     answerable: bool = True
 
 

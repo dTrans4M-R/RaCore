@@ -28,8 +28,8 @@ async def _ingest_then_answer_with_citation() -> None:
     pipeline = demo_pipeline()
 
     report = await pipeline.ingest(golden_source())
-    assert report.documents == 7
-    assert report.chunks == 7  # each one-sentence doc fits in a single window.
+    assert report.documents == 28
+    assert report.chunks == 28  # each one-sentence doc fits in a single window.
 
     answer = await pipeline.answer(Query(text="Which is the smallest planet?"))
 
@@ -76,27 +76,35 @@ async def _reingest_is_idempotent() -> None:
     await pipeline.ingest(source)
     after = await pipeline.store.search(probe, 100, "default")
 
-    assert len(before) == len(after) == 7
+    assert len(before) == len(after) == 28
 
 
 def test_eval_baseline_reports_quality_and_ops() -> None:
     report = asyncio.run(_baseline())
     metrics = {result.name: result.score for result in report.results}
 
-    # Quality: retrieval, grounding, and answer are all solid on the golden set.
-    assert metrics["retrieval.hit@k"] == 1.0
+    # Grounding is perfect: the extractive $0 generator only ever quotes the evidence it
+    # cites, so every claim is supported and every citation is right — regardless of whether
+    # the *right* evidence was retrieved.
     assert metrics["grounding.faithfulness"] == 1.0
     assert metrics["grounding.citation_correctness"] == 1.0
-    assert metrics["answer.correctness"] == 1.0
+
+    # Retrieval is now a real, measurable gap (this is the point of the harder corpus): on a
+    # corpus with distractors and paraphrase-gap questions the lexical $0 retriever no longer
+    # reaches every relevant doc (recall@k < 1), and even when it does, a distractor often
+    # wins rank 1, so the extractive answer — which quotes the top hit — is sometimes wrong
+    # (answer.correctness < 1). These are the numbers hybrid retrieval + reranking must beat.
+    assert 0.9 <= metrics["retrieval.recall@k"] < 1.0
+    assert 0.8 <= metrics["answer.correctness"] < 1.0
 
     # Ops: the $0 stack is free, and percentiles are ordered.
-    assert report.n_cases == 8
+    assert report.n_cases == 17
     assert report.cost_per_answer_usd == 0.0
     assert report.latency_p95_ms >= report.latency_p50_ms
     assert report.stage_millis  # per-stage breakdown exists.
 
-    # Known Phase 0 gap, surfaced not hidden: no abstention logic yet, so the negative
-    # controls produce false answers. Phase 2 closes this.
+    # Known gap, surfaced not hidden: no abstention logic yet, so the negative controls
+    # produce false answers. The robust abstention decision is Phase 2.
     assert metrics["refusal.accuracy"] < 1.0
 
 
@@ -104,7 +112,7 @@ def test_report_carries_per_case_detail() -> None:
     report = asyncio.run(_baseline())
 
     # One outcome per golden row, addressable by id, retained for drill-down.
-    assert len(report.per_case) == 8
+    assert len(report.per_case) == 17
     assert {"q1", "n1"} <= {c.id for c in report.per_case}
 
     # Verbose render surfaces the per-case block; the default render stays compact.

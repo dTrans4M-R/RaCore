@@ -19,6 +19,7 @@ from racore.adapters.rerankers import NoopReranker
 from racore.adapters.vectorstores import InMemoryVectorStore
 from racore.core.pipeline import Pipeline
 from racore.core.types import EvalCase, EvalResult, GoldenRow, Query
+from racore.eval.metrics import recall_at_k
 from racore.eval.pricing import cost_usd
 
 if TYPE_CHECKING:
@@ -54,6 +55,9 @@ class CaseOutcome:
     answer_correct: bool
     faithfulness: float
     citation_correctness: float
+    retrieval_recall: float
+    relevant_sources: tuple[str, ...]
+    retrieved_sources: tuple[str, ...]
     unsupported_claims: tuple[str, ...]
     answer: str
 
@@ -100,6 +104,9 @@ class HarnessReport:
                     "answer_correct": c.answer_correct,
                     "faithfulness": c.faithfulness,
                     "citation_correctness": c.citation_correctness,
+                    "retrieval_recall": c.retrieval_recall,
+                    "relevant_sources": list(c.relevant_sources),
+                    "retrieved_sources": list(c.retrieved_sources),
                     "unsupported_claims": list(c.unsupported_claims),
                     "answer": c.answer,
                 }
@@ -199,6 +206,9 @@ def _case_outcome(case: EvalCase) -> CaseOutcome:
         answer_correct=correct,
         faithfulness=answer.grounding.faithfulness,
         citation_correctness=answer.grounding.citation_correctness,
+        retrieval_recall=recall_at_k(case),
+        relevant_sources=row.relevant_sources,
+        retrieved_sources=tuple(r.chunk.source for r in answer.retrievals),
         unsupported_claims=answer.grounding.unsupported_claims,
         answer=answer.text,
     )
@@ -207,10 +217,15 @@ def _case_outcome(case: EvalCase) -> CaseOutcome:
 def _render_case(case: CaseOutcome) -> str:
     mark = "ok " if case.answer_correct else "BAD"
     head = (
-        f"  [{case.id}] {mark} faith={case.faithfulness:.2f} cite={case.citation_correctness:.2f}"
-        f" abstain={'Y' if case.abstained else 'n'}  {case.question}"
+        f"  [{case.id}] {mark} recall={case.retrieval_recall:.2f} faith={case.faithfulness:.2f}"
+        f" cite={case.citation_correctness:.2f} abstain={'Y' if case.abstained else 'n'}"
+        f"  {case.question}"
     )
     body = [f"        A: {_truncate(case.answer, 140)}"]
+    if case.answerable:
+        missed = [s for s in case.relevant_sources if s not in case.retrieved_sources]
+        top = case.retrieved_sources[0] if case.retrieved_sources else "(none)"
+        body.append(f"        retrieved top: {top}   missed relevant: {missed or 'none'}")
     body.extend(
         f"        - unsupported: {_truncate(claim, 120)}" for claim in case.unsupported_claims
     )

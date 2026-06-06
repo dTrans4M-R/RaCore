@@ -11,13 +11,13 @@ import asyncio
 import dataclasses
 from typing import TYPE_CHECKING
 
+from racore.adapters.sources import InMemoryDocumentSource
 from racore.core.pipeline import _is_refusal
-from racore.core.types import LLMResponse, Query
+from racore.core.types import GoldenRow, LLMResponse, Query
 from racore.eval import (
     HarnessReport,
     default_evaluators,
     demo_pipeline,
-    golden_dataset,
     golden_source,
     run,
 )
@@ -57,8 +57,23 @@ async def _pipeline_refusal() -> None:
     assert answer.abstained
 
 
+# A focused fixture: retrieval here is unambiguous, so this test exercises refusal
+# *recording* — not retrieval quality. (The harder golden set in datasets.py, where
+# retrieval is deliberately imperfect, is exercised by the eval-baseline tests.)
+_SIMPLE_CORPUS = (
+    ("planets/mercury", "Mercury is the smallest planet in the Solar System."),
+    ("planets/jupiter", "Jupiter is the largest planet in the Solar System."),
+)
+_SIMPLE_ROWS = (
+    GoldenRow("q1", "Which is the smallest planet?", "Mercury", ("planets/mercury",)),
+    GoldenRow("q2", "What is the largest planet?", "Jupiter", ("planets/jupiter",)),
+    GoldenRow("n1", "How many rings does Neptune have?", "", (), answerable=False),
+    GoldenRow("n2", "In what year did the first Moon landing happen?", "", (), answerable=False),
+)
+
+
 class _ScriptedLLM:
-    """Answers from evidence, but refuses on the corpus's two no-evidence questions."""
+    """Answers from evidence, but refuses on the fixture's two no-evidence questions."""
 
     async def generate(self, requests: list[LLMRequest]) -> list[LLMResponse]:
         responses: list[LLMResponse] = []
@@ -88,5 +103,5 @@ def test_recorded_refusals_make_faithfulness_and_refusal_honest() -> None:
 
 async def _scripted_run() -> HarnessReport:
     pipeline = dataclasses.replace(demo_pipeline(), llm=_ScriptedLLM())
-    await pipeline.ingest(golden_source())
-    return await run(pipeline, golden_dataset(), default_evaluators())
+    await pipeline.ingest(InMemoryDocumentSource(_SIMPLE_CORPUS))
+    return await run(pipeline, list(_SIMPLE_ROWS), default_evaluators())

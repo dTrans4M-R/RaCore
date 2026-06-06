@@ -18,20 +18,26 @@ if TYPE_CHECKING:
 
 
 class RetrievalEvaluator:
-    """Hit@k: for answerable rows, did the expected source appear in the retrieved set?"""
+    """Recall@k: of the sources relevant to a question, what fraction were retrieved.
 
-    name = "retrieval.hit@k"
+    The mean over answerable rows. For a single-relevant-source row this is the classic
+    hit@k (1.0 iff the source surfaced); for a multi-source row it is the fraction of the
+    relevant set that surfaced. Recall@k answers *did the right documents get reached at
+    all* — it is blind to rank, so a buried-but-present relevant doc still scores 1.0.
+    Rank-position quality (nDCG@k / MRR) is the next retrieval slice; until then watch
+    answer.correctness, which depends on the rank-1 result, to feel what recall@k hides.
+    """
+
+    name = "retrieval.recall@k"
 
     async def evaluate(self, cases: list[EvalCase]) -> EvalResult:
-        hits = [
-            any(r.chunk.source == case.row.expected_source for r in case.answer.retrievals)
-            for case in cases
-            if case.row.answerable
+        recalls = [
+            recall_at_k(case) for case in cases if case.row.answerable and case.row.relevant_sources
         ]
         return EvalResult(
             name=self.name,
-            score=_mean(hits),
-            details={"answerable_cases": float(len(hits))},
+            score=_mean(recalls),
+            details={"answerable_cases": float(len(recalls))},
         )
 
 
@@ -121,6 +127,19 @@ def default_evaluators() -> list[Evaluator]:
         AnswerCorrectnessEvaluator(),
         RefusalEvaluator(),
     ]
+
+
+def recall_at_k(case: EvalCase) -> float:
+    """Fraction of a row's relevant sources that appear anywhere in its retrieved set.
+
+    1.0 when the row has no relevant sources (a negative control), so callers can score it
+    uniformly; in practice the evaluator filters those out before averaging.
+    """
+    relevant = set(case.row.relevant_sources)
+    if not relevant:
+        return 1.0
+    retrieved = {r.chunk.source for r in case.answer.retrievals}
+    return len(relevant & retrieved) / len(relevant)
 
 
 def _mean(values: list[bool] | list[float], default: float = 1.0) -> float:

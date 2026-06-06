@@ -55,10 +55,14 @@ flagged**, and the entailment check is a swappable `EntailmentJudge` port — a 
 by default (so faithfulness is never inflated) with a paraphrase-tolerant token-overlap judge ready
 for richer generators, and a real LLM judge as a future drop-in.
 
-On the golden set today: **retrieval hit@k, grounding faithfulness, citation correctness, and answer
-correctness are all 1.0**; refusal accuracy is intentionally **below 1.0** — there is no abstention
-logic yet, so the harness *surfaces* that gap for Phase 2 to close rather than hiding it. Build order
-and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
+On the golden set today, **grounding faithfulness and citation correctness are 1.0** — the extractive
+$0 generator only ever quotes the evidence it cites. Retrieval, by contrast, is now a deliberate and
+**measurable** gap: the corpus carries distractors and paraphrase-gap questions, so the lexical $0
+retriever reads **recall@k ≈ 0.94**, and because a distractor often wins rank 1, **answer correctness
+≈ 0.86** (ADR-0014). Those are the numbers a real embedding adapter, hybrid retrieval, and a reranker
+must beat. Refusal accuracy is intentionally **below 1.0** — there is no abstention logic yet, so the
+harness *surfaces* that gap for Phase 2 rather than hiding it. Build order and per-phase "definition
+of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
 
