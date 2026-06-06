@@ -19,9 +19,11 @@ from racore.adapters.rerankers import NoopReranker
 from racore.adapters.vectorstores import InMemoryVectorStore
 from racore.core.pipeline import Pipeline
 from racore.core.types import EvalCase, EvalResult, GoldenRow, Query
+from racore.eval.pricing import cost_usd
 
 if TYPE_CHECKING:
     from racore.core.ports import Evaluator
+    from racore.core.types import TokenUsage
 
 
 def demo_pipeline() -> Pipeline:
@@ -66,14 +68,20 @@ class HarnessReport:
     latency_p50_ms: float
     latency_p95_ms: float
     latency_mean_ms: float
-    cost_per_answer_usd: float
+    cost_per_answer_usd: float | None  # None when a paid run used a model with no known price.
     stage_millis: tuple[tuple[str, float], ...]
+    tokens_in_per_answer: float = 0.0
+    tokens_out_per_answer: float = 0.0
     per_case: tuple[CaseOutcome, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
             "cases": self.n_cases,
             "cost_per_answer_usd": self.cost_per_answer_usd,
+            "tokens_per_answer": {
+                "in": self.tokens_in_per_answer,
+                "out": self.tokens_out_per_answer,
+            },
             "metrics": {
                 r.name: {"score": r.score, "details": dict(r.details)} for r in self.results
             },
@@ -100,13 +108,22 @@ class HarnessReport:
         }
 
     def render(self, *, verbose: bool = False) -> str:
+        cost = (
+            "n/a (unpriced model)"
+            if self.cost_per_answer_usd is None
+            else f"${self.cost_per_answer_usd:.6f}"
+        )
         lines = [
             "RaCore - evaluation baseline",
             "============================",
-            f"Cases: {self.n_cases}    Cost/answer: ${self.cost_per_answer_usd:.6f}",
-            "",
-            "Quality",
+            f"Cases: {self.n_cases}    Cost/answer: {cost}",
         ]
+        if self.tokens_in_per_answer or self.tokens_out_per_answer:
+            lines.append(
+                f"Tokens/answer: in {self.tokens_in_per_answer:.0f}"
+                f"   out {self.tokens_out_per_answer:.0f}"
+            )
+        lines += ["", "Quality"]
         for result in self.results:
             detail = "  ".join(f"{k}={v}" for k, v in result.details.items())
             lines.append(f"  {result.name:<32} {result.score:6.3f}   ({detail})")
@@ -140,16 +157,30 @@ async def run(
     results = tuple([await evaluator.evaluate(cases) for evaluator in evaluators])
 
     latencies = sorted(case.answer.total_millis for case in cases)
+    usages = [case.answer.usage for case in cases if case.answer.usage is not None]
     return HarnessReport(
         n_cases=len(cases),
         results=results,
         latency_p50_ms=_percentile(latencies, 50.0),
         latency_p95_ms=_percentile(latencies, 95.0),
         latency_mean_ms=_mean(latencies),
-        cost_per_answer_usd=0.0,  # the Phase 0 stack makes no paid calls (ADR-0007).
+        cost_per_answer_usd=_cost_per_answer(usages),
         stage_millis=_stage_means(cases),
+        tokens_in_per_answer=_mean([float(u.input_tokens) for u in usages]),
+        tokens_out_per_answer=_mean([float(u.output_tokens) for u in usages]),
         per_case=tuple(_case_outcome(case) for case in cases),
     )
+
+
+def _cost_per_answer(usages: list[TokenUsage]) -> float | None:
+    """Mean USD/answer from real usage. ``0.0`` when nothing was billed (the $0 stack reports
+    no usage); ``None`` when a billed model has no entry in the price table — never a fake $0."""
+    if not usages:
+        return 0.0
+    costs = [cost_usd(usage) for usage in usages]
+    if any(cost is None for cost in costs):
+        return None
+    return _mean([cost for cost in costs if cost is not None])
 
 
 def _case_outcome(case: EvalCase) -> CaseOutcome:

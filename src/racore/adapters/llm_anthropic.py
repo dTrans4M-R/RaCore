@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
-from racore.core.types import LLMResponse
+from racore.core.types import LLMResponse, TokenUsage
 
 if TYPE_CHECKING:
     from typing import Any
@@ -91,7 +91,8 @@ class AnthropicLLM:
             messages=[{"role": "user", "content": _render_prompt(request)}],
         )
         text = _extract_text(message)
-        return LLMResponse(text=text, cited_markers=_cited_markers(text))
+        usage = _extract_usage(message, self._config.model)
+        return LLMResponse(text=text, cited_markers=_cited_markers(text), usage=usage)
 
     def _client_or_build(self) -> _Client:
         if self._client is None:
@@ -139,3 +140,13 @@ def _extract_text(message: Any) -> str:
     """Concatenate the text blocks of an Anthropic message response."""
     blocks = getattr(message, "content", []) or []
     return "".join(block.text for block in blocks if getattr(block, "type", None) == "text").strip()
+
+
+def _extract_usage(message: Any, model: str) -> TokenUsage:
+    """Read input/output token counts off the message's ``usage`` (zero if absent)."""
+    raw = getattr(message, "usage", None)
+    return TokenUsage(
+        input_tokens=int(getattr(raw, "input_tokens", 0) or 0),
+        output_tokens=int(getattr(raw, "output_tokens", 0) or 0),
+        model=model,
+    )

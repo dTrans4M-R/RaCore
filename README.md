@@ -129,6 +129,12 @@ Retrieval stays 1.0 throughout. The model and its params are configurable via `A
 (default `claude-haiku-4-5-20251001`, `temperature=0.0`, both pinned for reproducible eval); override
 per run with `--model <id>`. The core and the default test path never import the SDK.
 
+The harness reports **real tokens/answer and cost/answer** from the provider's reported usage, priced
+by a verified table (`eval/pricing.py`). The `$0` stack reports a true $0; a model with no price entry
+shows tokens with `cost n/a` rather than a fake $0. Cost accounting is provider-agnostic — any adapter
+that fills in `LLMResponse.usage` is priced the same way; supporting a new provider is a table entry,
+not a code change. Add `-v` for per-case detail (which question, the answer, the unsupported claims).
+
 ## License
 
 **Apache-2.0** — see [`LICENSE`](LICENSE). You keep an irrevocable right to reuse this engine;

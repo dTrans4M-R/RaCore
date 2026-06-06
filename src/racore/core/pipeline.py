@@ -175,6 +175,7 @@ class Pipeline:
             grounding=outcome.report,
             timings=sw.timings,
             retrievals=tuple(ranked),
+            usage=response.usage,
         )
 
 

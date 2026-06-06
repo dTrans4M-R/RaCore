@@ -144,6 +144,21 @@ class ClaimCheck:
 
 
 @dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """Tokens billed for one LLM call, with the model that priced them. ``model`` is empty
+    for adapters that don't bill (the $0 stack), so the harness can report a true $0 rather
+    than guess. ``total_tokens`` is the input+output sum."""
+
+    input_tokens: int
+    output_tokens: int
+    model: str = ""
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass(frozen=True, slots=True)
 class LLMRequest:
     """What an ``LLMProvider`` receives: a question and the cited context to ground in."""
 
@@ -154,11 +169,13 @@ class LLMRequest:
 
 @dataclass(frozen=True, slots=True)
 class LLMResponse:
-    """What an ``LLMProvider`` returns: answer text and the 1-based evidence markers it
-    relied on, so the pipeline can resolve them to ``Citation`` objects."""
+    """What an ``LLMProvider`` returns: answer text, the 1-based evidence markers it relied
+    on (so the pipeline can resolve them to ``Citation`` objects), and the token usage if the
+    provider reported it (``None`` for the free adapters)."""
 
     text: str
     cited_markers: tuple[int, ...] = ()
+    usage: TokenUsage | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +233,7 @@ class Answer:
     timings: tuple[StageTiming, ...]
     retrievals: tuple[Retrieval, ...] = ()
     abstained: bool = False
+    usage: TokenUsage | None = None  # token cost of the generate call, if the provider reports it.
 
     async def stream(self) -> AsyncIterator[str]:
         """Yield the answer as text deltas.

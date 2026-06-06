@@ -31,13 +31,20 @@ class _FakeBlock:
         self.text = text
 
 
+class _FakeUsage:
+    def __init__(self, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
 class _FakeMessage:
-    def __init__(self, blocks: list[_FakeBlock]) -> None:
+    def __init__(self, blocks: list[_FakeBlock], usage: _FakeUsage | None = None) -> None:
         self.content = blocks
+        self.usage = usage
 
 
 class _FakeMessages:
-    """Records every create() call and replays a canned answer."""
+    """Records every create() call and replays a canned answer with token usage."""
 
     def __init__(self, reply: str) -> None:
         self._reply = reply
@@ -45,7 +52,7 @@ class _FakeMessages:
 
     async def create(self, **kwargs: Any) -> _FakeMessage:
         self.calls.append(kwargs)
-        return _FakeMessage([_FakeBlock(self._reply)])
+        return _FakeMessage([_FakeBlock(self._reply)], _FakeUsage(11, 7))
 
 
 class _FakeClient:
@@ -75,6 +82,11 @@ async def _generate_case() -> None:
 
     assert response.text == "Mercury is the smallest planet [1]. It is closest to the Sun [1]."
     assert response.cited_markers == (1,)  # deduped
+
+    # Token usage is carried through, tagged with the model that priced it.
+    assert response.usage is not None
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (11, 7)
+    assert response.usage.model == "claude-haiku-4-5"
 
     # The outgoing request carried our config, the system prompt, and numbered evidence.
     call = client.messages.calls[0]
