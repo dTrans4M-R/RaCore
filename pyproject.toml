@@ -9,6 +9,11 @@ authors = [{ name = "Tushar", email = "stushar.engineer@gmail.com" }]
 keywords = ["rag", "retrieval", "grounding", "evaluation", "memory", "llm"]
 dependencies = []
 
+[project.optional-dependencies]
+# Opt-in provider adapters. The core stays dependency-free (ADR-0007); these are only
+# needed when you swap a real provider in behind a port. Pin the newest stable SDK.
+anthropic = ["anthropic>=0.107"]
+
 [project.urls]
 # Repository = "https://github.com/<you>/RaCore"   # fill in when published
 
@@ -53,6 +58,14 @@ files = ["src", "tests"]
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+# `anthropic` is an OPTIONAL extra, absent from the default ($0) dev install. This tells mypy
+# its types are unknown when it isn't installed — the standard optional-dependency pattern. It
+# does not relax `strict` for any of our own code; the adapter is typed against a local
+# `Protocol`, so the core call path is fully checked regardless.
+[[tool.mypy.overrides]]
+module = "anthropic.*"
+ignore_missing_imports = true
 
 # --- pytest ---
 [tool.pytest.ini_options]

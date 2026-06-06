@@ -106,6 +106,25 @@ Swap any adapter (embeddings, vector store, reranker, LLM, …) for a real provi
 the core — that boundary is the ports-and-adapters design in
 [`docs/architecture.md`](docs/architecture.md).
 
+### Stress-testing grounding with a real model (opt-in)
+
+The `$0` stack quotes evidence verbatim, so grounding scores a perfect 1.0 — which proves the wiring,
+not that grounding is hard to fool. To challenge it with a real, *paraphrasing* generator behind the
+same `LLMProvider` port:
+
+```bash
+uv sync --extra anthropic                    # install the optional Anthropic SDK (not a core dep)
+# put your key in a gitignored .env:  ANTHROPIC_API_KEY=sk-ant-...
+uv run --env-file .env python -m racore.eval --llm anthropic --judge substring
+uv run --env-file .env python -m racore.eval --llm anthropic --judge overlap
+```
+
+The strict `substring` judge will surface a **faithfulness gap** (the model paraphrases instead of
+quoting); the paraphrase-tolerant `overlap` judge recovers much of it — the same number, two judges,
+showing why the entailment check is a port. The model and its params are configurable via
+`AnthropicConfig` (default `claude-haiku-4-5`, `temperature=0.0` for reproducibility). The core and
+the default test path never import the SDK.
+
 ## License
 
 **Apache-2.0** — see [`LICENSE`](LICENSE). You keep an irrevocable right to reuse this engine;

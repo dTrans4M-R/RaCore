@@ -1,26 +1,67 @@
 """``python -m racore.eval`` — ingest the golden corpus and print the baseline.
 
-This is the Phase 0 definition-of-done in runnable form: a thin end-to-end slice through
-the real ports that emits quality *and* latency/cost numbers with zero external spend.
+Runnable definition-of-done: a thin end-to-end slice through the real ports that emits
+quality *and* latency/cost numbers. The default (``--llm mock``) stays zero external spend;
+``--llm anthropic`` swaps a real generator in behind the same port to stress-test grounding
+(it paraphrases, so the strict substring judge will surface a faithfulness gap that
+``--judge overlap`` can close). The provider/judge are selected here, not baked into the core.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import dataclasses
+from typing import TYPE_CHECKING
 
+from racore.adapters.judges import SubstringEntailmentJudge, TokenOverlapEntailmentJudge
 from racore.eval.datasets import golden_dataset, golden_source
 from racore.eval.harness import HarnessReport, demo_pipeline, run
 from racore.eval.metrics import default_evaluators
 
+if TYPE_CHECKING:
+    from racore.core.pipeline import Pipeline
 
-async def _baseline() -> HarnessReport:
-    pipeline = demo_pipeline()
+_JUDGES = {"substring": SubstringEntailmentJudge, "overlap": TokenOverlapEntailmentJudge}
+
+
+def _build_pipeline(llm_kind: str, judge_kind: str) -> Pipeline:
+    """Start from the $0 stack and swap only the LLM and/or judge that were selected."""
+    pipeline = dataclasses.replace(demo_pipeline(), judge=_JUDGES[judge_kind]())
+    if llm_kind == "anthropic":
+        from racore.adapters.llm_anthropic import AnthropicLLM  # lazy: keeps the SDK optional.
+
+        return dataclasses.replace(pipeline, llm=AnthropicLLM())
+    return pipeline
+
+
+async def _run(llm_kind: str, judge_kind: str) -> HarnessReport:
+    pipeline = _build_pipeline(llm_kind, judge_kind)
     await pipeline.ingest(golden_source())
     return await run(pipeline, golden_dataset(), default_evaluators())
 
 
 def main() -> None:
-    report = asyncio.run(_baseline())
+    parser = argparse.ArgumentParser(
+        prog="python -m racore.eval",
+        description="Ingest the golden corpus and print the evaluation baseline.",
+    )
+    parser.add_argument(
+        "--llm",
+        choices=["mock", "anthropic"],
+        default="mock",
+        help="generator: 'mock' (extractive, $0, default) or 'anthropic' (real, opt-in).",
+    )
+    parser.add_argument(
+        "--judge",
+        choices=["substring", "overlap"],
+        default="substring",
+        help="entailment judge: 'substring' (exact, default) or 'overlap' (paraphrase-tolerant).",
+    )
+    args = parser.parse_args()
+
+    report = asyncio.run(_run(args.llm, args.judge))
+    print(f"# llm={args.llm}  judge={args.judge}")
     print(report.render())
 
 
