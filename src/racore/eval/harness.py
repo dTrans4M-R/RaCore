@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from racore.adapters.chunkers import FixedWindowChunker
 from racore.adapters.embeddings import MockEmbeddingProvider
+from racore.adapters.judges import SubstringEntailmentJudge
 from racore.adapters.llm import ExtractiveLLM
 from racore.adapters.rerankers import NoopReranker
 from racore.adapters.vectorstores import InMemoryVectorStore
@@ -24,13 +25,18 @@ if TYPE_CHECKING:
 
 
 def demo_pipeline() -> Pipeline:
-    """The standard deterministic, zero-cost Phase 0 pipeline."""
+    """The standard deterministic, zero-cost pipeline.
+
+    Grounding uses the strict ``SubstringEntailmentJudge`` so the faithfulness baseline is
+    never inflated by a lenient check; the paraphrase-tolerant judge is opt-in.
+    """
     return Pipeline(
         embedder=MockEmbeddingProvider(),
         store=InMemoryVectorStore(),
         reranker=NoopReranker(),
         chunker=FixedWindowChunker(),
         llm=ExtractiveLLM(),
+        judge=SubstringEntailmentJudge(),
     )
 
 
@@ -63,15 +69,15 @@ class HarnessReport:
 
     def render(self) -> str:
         lines = [
-            "RaCore Phase 0 - evaluation baseline",
-            "====================================",
+            "RaCore - evaluation baseline",
+            "============================",
             f"Cases: {self.n_cases}    Cost/answer: ${self.cost_per_answer_usd:.6f}",
             "",
             "Quality",
         ]
         for result in self.results:
             detail = "  ".join(f"{k}={v}" for k, v in result.details.items())
-            lines.append(f"  {result.name:<24} {result.score:6.3f}   ({detail})")
+            lines.append(f"  {result.name:<32} {result.score:6.3f}   ({detail})")
         lines += [
             "",
             "Latency (ms)",

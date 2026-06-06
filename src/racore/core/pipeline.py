@@ -9,31 +9,25 @@ Two cross-cutting concerns are built in from day one rather than bolted on:
   unchanged content is an idempotent upsert.
 
 Grounding, relevance, and memory are *stages on the main answer path*, not add-ons —
-matching ``docs/architecture.md`` §5.
+matching ``docs/architecture.md`` §5. The grounding logic itself lives in
+``racore.core.grounding``; this module only orchestrates the ports and times the stages.
 """
 
 from __future__ import annotations
 
-import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from racore.core import grounding
 from racore.core.types import (
     Answer,
-    Citation,
     EmbeddedChunk,
-    Evidence,
-    GroundedContext,
     GroundingReport,
     IngestReport,
     InputType,
     LLMRequest,
-    LLMResponse,
-    MemoryItem,
-    Query,
-    Retrieval,
     StageTiming,
 )
 
@@ -44,11 +38,13 @@ if TYPE_CHECKING:
         Chunker,
         DocumentSource,
         EmbeddingProvider,
+        EntailmentJudge,
         LLMProvider,
         MemoryStore,
         Reranker,
         VectorStore,
     )
+    from racore.core.types import LLMResponse, MemoryItem, Query
 
 _SYSTEM = (
     "Answer the question using only the numbered evidence provided. Cite each claim with "
@@ -85,6 +81,8 @@ class Pipeline:
 
     ``memory`` is optional: when absent (or when a query carries no ``user_id``) the
     memory read/write stages are skipped, so the corpus-only path stays simple.
+    ``drop_unsupported`` switches the grounding stage from *flag* (default — unsupported
+    claims are reported but kept) to *drop* (the answer is rebuilt from supported claims).
     """
 
     embedder: EmbeddingProvider
@@ -92,7 +90,9 @@ class Pipeline:
     reranker: Reranker
     chunker: Chunker
     llm: LLMProvider
+    judge: EntailmentJudge
     memory: MemoryStore | None = None
+    drop_unsupported: bool = False
 
     async def ingest(self, source: DocumentSource, tenant_id: str = "default") -> IngestReport:
         """``fetch -> chunk -> embed -> upsert``, timing each stage."""
@@ -152,7 +152,7 @@ class Pipeline:
             )
 
         with sw.stage("assemble"):
-            context = _assemble(query.text, ranked)
+            context = grounding.assemble(query.text, ranked)
 
         with sw.stage("generate"):
             (response,) = await self.llm.generate(
@@ -160,7 +160,9 @@ class Pipeline:
             )
 
         with sw.stage("verify"):
-            citations, grounding = _verify(response, context)
+            outcome = await grounding.verify(
+                response, context, self.judge, drop_unsupported=self.drop_unsupported
+            )
 
         if use_memory:
             assert self.memory is not None and query.user_id is not None  # narrowed above
@@ -168,9 +170,9 @@ class Pipeline:
                 await self.memory.write(query.tenant_id, query.user_id, _learn(query, response))
 
         return Answer(
-            text=response.text,
-            citations=citations,
-            grounding=grounding,
+            text=outcome.text,
+            citations=outcome.citations,
+            grounding=outcome.report,
             timings=sw.timings,
             retrievals=tuple(ranked),
         )
@@ -184,70 +186,6 @@ def _understand(query: Query, memories: list[MemoryItem]) -> str:
     memory-conditioned expansion land in Phase 2. ``memories`` is accepted now so the
     signature is stable once it starts to matter."""
     return query.text
-
-
-def _assemble(query_text: str, ranked: list[Retrieval]) -> GroundedContext:
-    """Turn ranked retrievals into cited evidence the LLM can ground in."""
-    evidences = tuple(
-        Evidence(
-            quote=r.chunk.text,
-            doc_id=r.chunk.doc_id,
-            chunk_id=r.chunk.id,
-            start=r.chunk.start,
-            end=r.chunk.end,
-            source=r.chunk.source,
-        )
-        for r in ranked
-    )
-    return GroundedContext(query=query_text, evidences=evidences)
-
-
-_MARKER_RE = re.compile(r"\s*\[\d+\]")
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
-
-
-def _verify(
-    response: LLMResponse, context: GroundedContext
-) -> tuple[tuple[Citation, ...], GroundingReport]:
-    """Resolve cited markers to citations and check faithfulness deterministically.
-
-    A claim (a sentence of the answer, with markers stripped) is *supported* when it
-    appears verbatim within one of the cited evidence quotes. This is the deterministic
-    half of the faithfulness check in ``docs/evaluation.md`` §2; an LLM-judge for
-    paraphrased support lands in Phase 1.
-    """
-    citations = tuple(
-        Citation(marker=m, evidence=context.evidences[m - 1])
-        for m in response.cited_markers
-        if 1 <= m <= len(context.evidences)
-    )
-    cited_quotes = [_normalize(c.evidence.quote) for c in citations]
-
-    supported: list[str] = []
-    unsupported: list[str] = []
-    for claim in _claims(response.text):
-        norm = _normalize(claim)
-        if any(norm in quote for quote in cited_quotes):
-            supported.append(claim)
-        else:
-            unsupported.append(claim)
-
-    return citations, GroundingReport(
-        supported_claims=tuple(supported), unsupported_claims=tuple(unsupported)
-    )
-
-
-def _claims(text: str) -> list[str]:
-    """Split an answer into claim sentences, with citation markers removed."""
-    cleaned = _MARKER_RE.sub("", text).strip()
-    if not cleaned:
-        return []
-    return [s for s in (part.strip() for part in _SENTENCE_SPLIT_RE.split(cleaned)) if s]
-
-
-def _normalize(text: str) -> str:
-    """Lowercase and collapse whitespace for substring comparison."""
-    return " ".join(text.lower().split())
 
 
 def _learn(query: Query, response: LLMResponse) -> list[MemoryItem]:

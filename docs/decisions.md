@@ -78,3 +78,19 @@ an ops dimension, not just a quality dimension.
 force a rework to support it. **Decision:** derive document and chunk IDs deterministically from a
 content hash at ingest time. **Consequences:** re-ingesting unchanged content is a no-op; incremental
 freshness and dedup work later with no schema change; a one-line decision made early.
+
+### ADR-0012 — Grounding as a pluggable stage with an `EntailmentJudge` port
+**Context:** Phase 0 inlined one deterministic substring check in the pipeline: it pooled *all* cited
+quotes per answer, so it could not attribute a claim to the specific evidence it cited, could not
+tell an uncited claim from a supported one, and left no seam for a paraphrase-aware or LLM judge.
+Phase 1's definition of done is *faithfulness + citation-correctness measured; unsupported claims
+dropped/flagged.* **Decision:** extract grounding into `core/grounding.py` as a real stage that (a)
+attributes each claim to the markers it cited and judges it against **only** that evidence, (b) makes
+entailment an `EntailmentJudge` **port** with deterministic $0 adapters — `SubstringEntailmentJudge`
+(exact, the strict default) and `TokenOverlapEntailmentJudge` (paraphrase-tolerant) — and (c) supports
+a **drop-or-flag** policy for unsupported claims; plus add **citation correctness** as a gated metric
+beside faithfulness. **Consequences:** a real LLM entailment judge is a drop-in adapter with no caller
+change; the strict default keeps the headline faithfulness number honest; faithfulness (penalizes
+uncited claims) and citation-correctness (scores only the citations actually made) are now distinct,
+separately gated numbers; the drop policy can rewrite an answer down to its supported claims. The
+golden-set baseline is unchanged, because the extractive $0 path quotes evidence verbatim.

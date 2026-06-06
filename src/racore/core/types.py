@@ -132,6 +132,18 @@ class Citation:
 
 
 @dataclass(frozen=True, slots=True)
+class ClaimCheck:
+    """One claim paired with the evidence it cited — the unit an ``EntailmentJudge`` scores.
+
+    ``evidence`` holds the quote text of each marker the claim cited; it is empty when the
+    claim cited nothing, so an uncited claim is unsupportable by construction.
+    """
+
+    claim: str
+    evidence: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class LLMRequest:
     """What an ``LLMProvider`` receives: a question and the cited context to ground in."""
 
@@ -151,16 +163,30 @@ class LLMResponse:
 
 @dataclass(frozen=True, slots=True)
 class GroundingReport:
-    """Per-claim support verdict for an answer. Faithfulness is the headline metric:
-    the fraction of claims with a supporting cited span (1.0 when there are no claims)."""
+    """Per-claim support verdict for an answer.
+
+    Two complementary numbers, per ``docs/evaluation.md`` §2:
+
+    * **faithfulness** (headline) — supported claims / all claims. An *uncited* claim counts
+      against it: an assertion with no citation has nothing backing it.
+    * **citation correctness** — correctly-cited claims / cited claims. Of the citations the
+      answer actually made, how many point at evidence that really supports the claim.
+    """
 
     supported_claims: tuple[str, ...]
     unsupported_claims: tuple[str, ...]
+    cited_claims: int = 0  # claims that carried at least one citation marker.
+    correct_citations: int = 0  # cited claims whose evidence actually supports them.
 
     @property
     def faithfulness(self) -> float:
         total = len(self.supported_claims) + len(self.unsupported_claims)
         return 1.0 if total == 0 else len(self.supported_claims) / total
+
+    @property
+    def citation_correctness(self) -> float:
+        """Fraction of *cited* claims whose citation is right (1.0 when nothing was cited)."""
+        return 1.0 if self.cited_claims == 0 else self.correct_citations / self.cited_claims
 
     @property
     def is_grounded(self) -> bool:

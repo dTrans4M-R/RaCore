@@ -44,9 +44,11 @@ async def _ingest_then_answer_with_citation() -> None:
     assert citation.evidence.quote == answer.retrievals[0].chunk.text
     assert citation.evidence.doc_id == answer.retrievals[0].chunk.doc_id
 
-    # Every claim is grounded (the extractive answer is a cited span).
+    # Every claim is grounded (the extractive answer is a cited span), and the citation it
+    # made is correct.
     assert answer.grounding.is_grounded
     assert answer.grounding.faithfulness == 1.0
+    assert answer.grounding.citation_correctness == 1.0
 
     # Per-stage timing is present (ADR-0010).
     stages = {timing.stage for timing in answer.timings}
@@ -84,6 +86,7 @@ def test_eval_baseline_reports_quality_and_ops() -> None:
     # Quality: retrieval, grounding, and answer are all solid on the golden set.
     assert metrics["retrieval.hit@k"] == 1.0
     assert metrics["grounding.faithfulness"] == 1.0
+    assert metrics["grounding.citation_correctness"] == 1.0
     assert metrics["answer.correctness"] == 1.0
 
     # Ops: the $0 stack is free, and percentiles are ordered.

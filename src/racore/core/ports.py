@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from racore.core.types import (
         Chunk,
+        ClaimCheck,
         Document,
         EmbeddedChunk,
         EvalCase,
@@ -92,6 +93,18 @@ class LLMProvider(Protocol):
     pipeline can resolve them to citations. Streaming is additive later (ADR-0009)."""
 
     async def generate(self, requests: list[LLMRequest]) -> list[LLMResponse]: ...
+
+
+class EntailmentJudge(Protocol):
+    """Decide, per claim, whether its cited evidence entails (supports) it.
+
+    The pluggable half of the grounding stage (``docs/evaluation.md`` §2). Batch-first — a
+    list of checks in, one verdict per check out, in the same order — and ``async`` so a real
+    LLM-judge for paraphrased support drops in behind the same port without touching callers
+    (ADR-0009). The deterministic ``$0`` judges live in ``racore.adapters.judges``.
+    """
+
+    async def judge(self, checks: list[ClaimCheck]) -> list[bool]: ...
 
 
 class Evaluator(Protocol):

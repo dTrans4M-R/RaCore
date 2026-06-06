@@ -44,15 +44,21 @@ here, never in a consumer repo. See [`CLAUDE.md`](CLAUDE.md) for the house rules
 
 ## Status
 
-**Phase 0 — Foundation: the walking skeleton is live.** A thin end-to-end slice runs through the
-real ports at **$0** external spend — ingest → retrieve → rerank → ground → cite → answer — with
-per-stage timing (ADR-0010) and content-hash IDs (ADR-0011), plus an eval harness that prints a
-baseline over a golden set.
+**Phase 0 — Foundation: the walking skeleton is live**, and **Phase 1 — Grounding is underway.** A
+thin end-to-end slice runs through the real ports at **$0** external spend — ingest → retrieve →
+rerank → ground → cite → answer — with per-stage timing (ADR-0010) and content-hash IDs (ADR-0011),
+plus an eval harness that prints a baseline over a golden set.
 
-On the golden set today: **retrieval hit@k, grounding faithfulness, and answer correctness are all
-1.0**; refusal accuracy is intentionally **below 1.0** — Phase 0 has no abstention logic yet, so the
-harness *surfaces* that gap for Phase 2 to close rather than hiding it. Build order and per-phase
-"definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
+Grounding is now a real, pluggable stage (`core/grounding.py`, ADR-0012): each claim is attributed
+to the evidence *it* cited and judged against only that span, unsupported claims are **dropped or
+flagged**, and the entailment check is a swappable `EntailmentJudge` port — a strict substring judge
+by default (so faithfulness is never inflated) with a paraphrase-tolerant token-overlap judge ready
+for richer generators, and a real LLM judge as a future drop-in.
+
+On the golden set today: **retrieval hit@k, grounding faithfulness, citation correctness, and answer
+correctness are all 1.0**; refusal accuracy is intentionally **below 1.0** — there is no abstention
+logic yet, so the harness *surfaces* that gap for Phase 2 to close rather than hiding it. Build order
+and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
 

@@ -1,10 +1,10 @@
 """Evaluators — one per metric, each satisfying the ``Evaluator`` port.
 
-They cover the layers of ``docs/evaluation.md`` §2 that Phase 0 can measure: retrieval
-hit-rate, grounding faithfulness, answer correctness, and refusal accuracy. Each returns a
-single ``EvalResult`` with a score in ``[0, 1]`` plus supporting detail. Keeping retrieval,
-grounding, and answer separate is deliberate: a good final answer can hide a broken
-retriever, and vice versa.
+They cover the layers of ``docs/evaluation.md`` §2 we can measure: retrieval hit-rate,
+grounding faithfulness, citation correctness, answer correctness, and refusal accuracy. Each
+returns a single ``EvalResult`` with a score in ``[0, 1]`` plus supporting detail. Keeping
+retrieval, grounding, and answer separate is deliberate: a good final answer can hide a
+broken retriever, and vice versa.
 """
 
 from __future__ import annotations
@@ -53,6 +53,29 @@ class FaithfulnessEvaluator:
         )
 
 
+class CitationCorrectnessEvaluator:
+    """Of the citations an answer actually made, how many point at supporting evidence.
+
+    Distinct from faithfulness: faithfulness penalizes uncited claims, while this scores only
+    *cited* claims — it asks whether the citations that exist are right (``docs/evaluation.md``
+    §2). Averaged over answered cases that cited at least one source.
+    """
+
+    name = "grounding.citation_correctness"
+
+    async def evaluate(self, cases: list[EvalCase]) -> EvalResult:
+        scored = [
+            case.answer.grounding.citation_correctness
+            for case in cases
+            if not case.answer.abstained and case.answer.grounding.cited_claims > 0
+        ]
+        return EvalResult(
+            name=self.name,
+            score=_mean(scored),
+            details={"cited_cases": float(len(scored))},
+        )
+
+
 class AnswerCorrectnessEvaluator:
     """Correctness: does the expected answer appear in the produced answer text?"""
 
@@ -94,6 +117,7 @@ def default_evaluators() -> list[Evaluator]:
     return [
         RetrievalEvaluator(),
         FaithfulnessEvaluator(),
+        CitationCorrectnessEvaluator(),
         AnswerCorrectnessEvaluator(),
         RefusalEvaluator(),
     ]
