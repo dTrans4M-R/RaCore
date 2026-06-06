@@ -43,8 +43,10 @@ mis-scored — which is what this records.)
   several for a multi-source row). This is your regression bedrock. It is deliberately **not** an easy
   corpus: it carries **distractors** (docs that share a question's words without answering it) and
   **paraphrase-gap** questions (wording that diverges from the answer doc), so retrieval is non-trivial
-  and recall@k / answer-correctness have real headroom for hybrid retrieval and reranking to close
-  (ADR-0014). Today's $0 baseline: recall@k ≈ 0.94, answer-correctness ≈ 0.86, grounding 1.0.
+  and has real headroom for hybrid retrieval and reranking to close (ADR-0014). It is scored both by
+  position-blind **recall@k** and by the rank-aware **nDCG@k / MRR** (ADR-0015) — the latter expose the
+  buried-but-present docs recall hides, and are the metrics a reranker moves. Today's $0 baseline:
+  recall@k ≈ 0.94, nDCG@k ≈ 0.86, MRR ≈ 0.89, answer-correctness ≈ 0.86, grounding 1.0.
 - **Public benchmarks** — for the contracts/financial corpus, **CUAD** (contract clause QA) is a
   strong fit; add a small financial-QA set for numbers. Use them to sanity-check against the field.
 - **Negative controls** — questions whose answer is **not** in the corpus. The system must **abstain**,

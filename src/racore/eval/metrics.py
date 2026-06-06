@@ -1,14 +1,17 @@
 """Evaluators — one per metric, each satisfying the ``Evaluator`` port.
 
-They cover the layers of ``docs/evaluation.md`` §2 we can measure: retrieval hit-rate,
-grounding faithfulness, citation correctness, answer correctness, and refusal accuracy. Each
-returns a single ``EvalResult`` with a score in ``[0, 1]`` plus supporting detail. Keeping
-retrieval, grounding, and answer separate is deliberate: a good final answer can hide a
-broken retriever, and vice versa.
+They cover the layers of ``docs/evaluation.md`` §2 we can measure: retrieval (recall@k plus
+the rank-aware nDCG@k / MRR), grounding faithfulness, citation correctness, answer correctness,
+and refusal accuracy. Each returns a single ``EvalResult`` with a score in ``[0, 1]`` plus
+supporting detail. Keeping retrieval, grounding, and answer separate is deliberate: a good
+final answer can hide a broken retriever, and vice versa — and a *real* generator can hide it
+twice over by reading past a bad rank-1, which is why the retriever gets rank-aware metrics of
+its own rather than being judged through answer correctness.
 """
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from racore.core.types import EvalCase, EvalResult
@@ -118,10 +121,56 @@ class RefusalEvaluator:
         )
 
 
+class NDCGEvaluator:
+    """nDCG@k: rank-weighted retrieval quality — credit for a relevant doc decays with its rank.
+
+    Where recall@k is blind to position (a relevant doc at rank 5 scores the same as at rank 1),
+    nDCG discounts each relevant hit by ``log2(rank + 1)`` and normalises against the ideal
+    ranking. Moving the right doc *up* raises the score — so this is the metric a reranker
+    improves and recall@k cannot see. Mean over answerable rows with ≥1 relevant source.
+    """
+
+    name = "retrieval.ndcg@k"
+
+    async def evaluate(self, cases: list[EvalCase]) -> EvalResult:
+        scores = [
+            ndcg_at_k(case) for case in cases if case.row.answerable and case.row.relevant_sources
+        ]
+        return EvalResult(
+            name=self.name,
+            score=_mean(scores),
+            details={"answerable_cases": float(len(scores))},
+        )
+
+
+class MRREvaluator:
+    """Mean Reciprocal Rank: ``1 / rank`` of the *first* relevant doc retrieved (0 if none).
+
+    A pure top-of-list signal — exactly what a generator that leans on the rank-1 result
+    depends on. Mean over answerable rows with ≥1 relevant source.
+    """
+
+    name = "retrieval.mrr"
+
+    async def evaluate(self, cases: list[EvalCase]) -> EvalResult:
+        scores = [
+            reciprocal_rank(case)
+            for case in cases
+            if case.row.answerable and case.row.relevant_sources
+        ]
+        return EvalResult(
+            name=self.name,
+            score=_mean(scores),
+            details={"answerable_cases": float(len(scores))},
+        )
+
+
 def default_evaluators() -> list[Evaluator]:
-    """The standard Phase 0 evaluator panel."""
+    """The standard evaluator panel: retrieval (recall + rank-aware), grounding, answer, refusal."""
     return [
         RetrievalEvaluator(),
+        NDCGEvaluator(),
+        MRREvaluator(),
         FaithfulnessEvaluator(),
         CitationCorrectnessEvaluator(),
         AnswerCorrectnessEvaluator(),
@@ -140,6 +189,33 @@ def recall_at_k(case: EvalCase) -> float:
         return 1.0
     retrieved = {r.chunk.source for r in case.answer.retrievals}
     return len(relevant & retrieved) / len(relevant)
+
+
+def ndcg_at_k(case: EvalCase) -> float:
+    """Normalised discounted cumulative gain over the retrieved list (binary relevance).
+
+    DCG sums ``1 / log2(rank + 1)`` for each retrieved doc that is relevant; IDCG is the same
+    sum for the best possible ranking (every relevant doc packed at the top, capped at the
+    number of retrieved slots). 1.0 for a row with no relevant sources; 0.0 when nothing
+    relevant was retrieved.
+    """
+    relevant = set(case.row.relevant_sources)
+    if not relevant:
+        return 1.0
+    retrieved = [r.chunk.source for r in case.answer.retrievals]
+    dcg = sum(1.0 / math.log2(rank + 2) for rank, src in enumerate(retrieved) if src in relevant)
+    ideal_hits = min(len(relevant), len(retrieved))
+    idcg = sum(1.0 / math.log2(rank + 2) for rank in range(ideal_hits))
+    return dcg / idcg if idcg else 0.0
+
+
+def reciprocal_rank(case: EvalCase) -> float:
+    """``1 / rank`` (1-based) of the first relevant doc in the retrieved list; 0.0 if none."""
+    relevant = set(case.row.relevant_sources)
+    for rank, retrieval in enumerate(case.answer.retrievals, start=1):
+        if retrieval.chunk.source in relevant:
+            return 1.0 / rank
+    return 0.0
 
 
 def _mean(values: list[bool] | list[float], default: float = 1.0) -> float:

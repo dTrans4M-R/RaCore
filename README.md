@@ -58,9 +58,11 @@ for richer generators, and a real LLM judge as a future drop-in.
 On the golden set today, **grounding faithfulness and citation correctness are 1.0** — the extractive
 $0 generator only ever quotes the evidence it cites. Retrieval, by contrast, is now a deliberate and
 **measurable** gap: the corpus carries distractors and paraphrase-gap questions, so the lexical $0
-retriever reads **recall@k ≈ 0.94**, and because a distractor often wins rank 1, **answer correctness
-≈ 0.86** (ADR-0014). Those are the numbers a real embedding adapter, hybrid retrieval, and a reranker
-must beat. Refusal accuracy is intentionally **below 1.0** — there is no abstention logic yet, so the
+retriever reads **recall@k ≈ 0.94** (ADR-0014). The rank-aware view confirms the weakness recall
+hides — **nDCG@k ≈ 0.86, MRR ≈ 0.89**, both below recall, because the right doc is frequently
+retrieved but not ranked first (ADR-0015). Those are the numbers a real embedding adapter, hybrid
+retrieval, and a reranker must beat. Refusal accuracy is intentionally **below 1.0** — there is no
+abstention logic yet, so the
 harness *surfaces* that gap for Phase 2 rather than hiding it. Build order and per-phase "definition
 of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -77,7 +79,10 @@ of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 1. **Python 3.12+** and [`uv`](https://docs.astral.sh/uv/). Node 20+ later for the demo UI.
 2. `uv sync` — creates the venv and installs the dev toolchain (ruff, mypy, pytest, pre-commit).
 3. `uv run pre-commit install` — activates the commit-time quality gate.
-4. `uv run pytest` — runs the test suite (green).
+4. `uv run pytest` — runs the test suite. In the lean (default) environment this is **green with one
+   skip**: a single contract test that pins the real Anthropic SDK's client shape runs only when the
+   optional `anthropic` extra is installed, so it is skipped here by design (ADR-0007 keeps the paid
+   SDK out of the core gate). To include it: `uv run --extra anthropic pytest` (skip → pass).
 5. `uv run python -m racore.eval` — ingests the golden corpus and prints the baseline metrics.
 
 ### Quickstart (ingest → ask → grounded answer)
@@ -127,9 +132,13 @@ uv run --extra anthropic --env-file .env python -m racore.eval --llm anthropic -
 The strict `substring` judge surfaces the **faithfulness gap** — a real generator reformats sentences
 rather than quoting, so exact-match grounding collapses (faithfulness ≈ **0.0** on a Haiku run, the
 honest extreme). The paraphrase-tolerant `overlap` judge recovers most of it (faithfulness ≈ **0.75**,
-citation-correctness ≈ **0.86** on the same answers) — same numbers, two judges, which is exactly why
-the entailment check is a swappable port. (Illustrative; values move with the model and run.)
-Retrieval stays 1.0 throughout. The model and its params are configurable via `AnthropicConfig`
+citation-correctness ≈ **0.75** on the same answers) — same answers, two judges, which is exactly why
+the entailment check is a swappable port. (Illustrative; values move with the model and run.) Two
+things the real model reveals: **answer correctness rises to ≈ 1.0** — a capable reader answers
+correctly even when a distractor wins rank 1, which is why retrieval keeps its own rank-aware metrics
+rather than being judged through the answer; and **retrieval recall@k stays ≈ 0.94** regardless of
+generator or judge (it is upstream of both). The model and its params are configurable via
+`AnthropicConfig`
 (default `claude-haiku-4-5-20251001`, `temperature=0.0`, both pinned for reproducible eval); override
 per run with `--model <id>`. The core and the default test path never import the SDK.
 

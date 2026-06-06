@@ -97,6 +97,12 @@ def test_eval_baseline_reports_quality_and_ops() -> None:
     assert 0.9 <= metrics["retrieval.recall@k"] < 1.0
     assert 0.8 <= metrics["answer.correctness"] < 1.0
 
+    # Rank-aware metrics expose what recall@k hides: the right doc is often retrieved but not
+    # at rank 1 (a distractor wins), so nDCG@k and MRR sit *below* recall@k. This is the gap a
+    # reranker closes — and which recall@k, being position-blind, cannot see.
+    assert 0.0 < metrics["retrieval.ndcg@k"] < metrics["retrieval.recall@k"]
+    assert 0.0 < metrics["retrieval.mrr"] < metrics["retrieval.recall@k"]
+
     # Ops: the $0 stack is free, and percentiles are ordered.
     assert report.n_cases == 17
     assert report.cost_per_answer_usd == 0.0

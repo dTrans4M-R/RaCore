@@ -135,3 +135,20 @@ real embedding adapter, hybrid retrieval, and a reranker must beat. Relevance ju
 content-defensible — a doc is marked relevant only if it states the fact. Behaviour tests that
 need perfect retrieval (refusal recording) use a small focused fixture, not the hard set, so
 each test exercises one thing.
+
+### ADR-0015 — Rank-aware retrieval metrics (nDCG@k, MRR) added *before* the reranker
+**Context:** ADR-0014 deferred nDCG@k / MRR to "the slice that lands the reranker." A real-model
+run (Claude Haiku, 2026-06-07) showed that ordering was wrong. Two things make the existing
+metrics blind to rank: **answer.correctness rose from 0.857 (extractive mock) to 1.000 (Claude)**
+because a capable generator reads *all* `k` evidences and answers correctly even when a distractor
+wins rank 1 — so end-to-end correctness **launders** retrieval rank quality; and **recall@k is
+position-blind** by construction. A reranker only reorders within top-k, so it moves *neither*
+recall@k nor LLM answer.correctness — with only those metrics, a reranker's benefit is unmeasurable.
+**Decision:** add **nDCG@k** (relevant hit discounted by `log2(rank+1)`, normalised to the ideal
+ranking) and **MRR** (`1/rank` of the first relevant doc) as gated evaluators **now**, before
+building the retriever — measurement before optimization (ADR-0005). Binary relevance over
+`relevant_sources`. **Consequences:** the $0 baseline now reads **recall@k 0.940, nDCG@k 0.863,
+MRR 0.889** — the rank-aware pair sits *below* recall, surfacing the buried-but-present docs recall
+hides. These are the gated numbers a reranker (and hybrid retrieval) must lift, and the reason the
+retriever is judged directly rather than through a forgiving generator. Graded (multi-level)
+relevance can extend nDCG later with no interface change.
