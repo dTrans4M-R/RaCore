@@ -15,6 +15,7 @@ matching ``docs/architecture.md`` §5. The grounding logic itself lives in
 
 from __future__ import annotations
 
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -53,6 +54,12 @@ _SYSTEM = (
 )
 
 _ABSTAIN_TEXT = "I don't know — I couldn't find supporting evidence in the corpus."
+
+# A generated answer that opens with the mandated "I don't know" is the model declining to
+# answer (the system prompt instructs exactly that on missing evidence). We *record* that as an
+# abstention so a correct refusal isn't scored as an ungrounded answer — a measurement-integrity
+# signal (ADR-0013), distinct from the Phase 2 capability of *deciding* when to abstain.
+_REFUSAL_RE = re.compile(r"^\W*i\s+don'?t\s+know\b", re.IGNORECASE)
 
 
 class _Stopwatch:
@@ -176,6 +183,7 @@ class Pipeline:
             timings=sw.timings,
             retrievals=tuple(ranked),
             usage=response.usage,
+            abstained=_is_refusal(response.text),
         )
 
 
@@ -194,3 +202,12 @@ def _learn(query: Query, response: LLMResponse) -> list[MemoryItem]:
     proposes memories from the turn lands in Phase 4 (``docs/memory.md`` §3). Kept as a
     seam so the ``memory.write`` stage and its timing already exist."""
     return []
+
+
+def _is_refusal(text: str) -> bool:
+    """True when the model declined to answer (opens with the mandated "I don't know").
+
+    This records what the model did so a correct refusal on a no-evidence question isn't
+    scored as an ungrounded answer (ADR-0013). It is a heuristic on the phrasing the system
+    prompt mandates — Phase 2 replaces it with a robust abstention decision."""
+    return _REFUSAL_RE.match(text) is not None

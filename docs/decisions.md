@@ -94,3 +94,22 @@ change; the strict default keeps the headline faithfulness number honest; faithf
 uncited claims) and citation-correctness (scores only the citations actually made) are now distinct,
 separately gated numbers; the drop policy can rewrite an answer down to its supported claims. The
 golden-set baseline is unchanged, because the extractive $0 path quotes evidence verbatim.
+
+### ADR-0013 — Record model refusals as abstentions (measurement integrity)
+**Context:** A capable LLM, told by the system prompt to say "I don't know" when the evidence
+lacks the answer, correctly refuses on negative-control questions. But the pipeline set
+`abstained` only on *empty retrieval*, so a textual refusal was scored as a normal answer —
+its ungrounded refusal sentences drove faithfulness down, and refusal accuracy counted the
+correct refusal as a false answer. Per-case eval (`-v`) on a real Haiku run made it concrete:
+all six answerable questions scored faithfulness 1.0 (overlap judge), and the aggregate 0.75
+came *entirely* from two correctly-refused controls. **Decision:** detect the mandated "I
+don't know" refusal in the generated answer and set `abstained=True`. Faithfulness already
+excludes abstained cases; refusal accuracy credits an abstention on a no-evidence question.
+This **records what the model did** — deliberately distinct from the Phase 2 capability of
+**deciding** when to abstain (retrieval-confidence, query understanding), which stays
+deferred. Detection is a heuristic on the phrasing the system prompt mandates.
+**Consequences:** faithfulness and refusal aggregates reflect reality — a correct refusal is
+no longer double-penalized (with a scripted-refusal pipeline both read 1.0). The $0 mock
+baseline is unchanged (the extractive LLM never refuses). The heuristic could miss a reworded
+refusal or false-positive on an answer that literally opens "I don't know"; acceptable for a
+seed, hardened when Phase 2 builds a real abstention decision.

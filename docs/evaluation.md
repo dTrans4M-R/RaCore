@@ -28,6 +28,14 @@ Evaluate each stage independently — a good final answer can hide a broken retr
 entails it? Measured deterministically where the citation maps to a verbatim span, and with an
 LLM-judge (entailment) for paraphrased support. The unsupported-claim rate is your hallucination gauge.
 
+**Abstentions are excluded from faithfulness.** A correct refusal ("I don't know" on a no-evidence
+question) makes no grounded claims — scoring it for faithfulness would punish the right behaviour. The
+pipeline records a model refusal as an abstention (ADR-0013), faithfulness skips abstained cases, and
+refusal accuracy credits them. Read the two together: low faithfulness with high refusal accuracy can
+mean the system is correctly *declining*, not hallucinating. (Found via per-case `-v`: a real model
+scored 1.0 on every answerable row, and the only drag on the aggregate was two correct refusals being
+mis-scored — which is what this records.)
+
 ## 3. Datasets
 
 - **Golden set** — hand-built `(question, expected_answer, supporting_source_span)` rows. Start with
