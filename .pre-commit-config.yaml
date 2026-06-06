@@ -1,0 +1,62 @@
+# Quality gate — runs on every commit. Install once with: uv run pre-commit install
+# Run on demand with: uv run pre-commit run --all-files
+default_language_version:
+  python: python3.12
+
+repos:
+  # --- generic hygiene ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-yaml
+      - id: check-toml
+      - id: detect-private-key
+
+  # --- ruff: lint + format ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  # --- secret scanning (Python-native: fast install, no Go toolchain needed) ---
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+
+  # --- local guards ---
+  - repo: local
+    hooks:
+      # Block private strategy/business docs from ever entering the public engine repo.
+      - id: no-strategy-docs
+        name: block private strategy docs
+        entry: >-
+          Private strategy docs (vision-and-business / roadmap-full / *strategy*) must NOT be
+          committed to the public RaCore repo. They belong in the private racore-strategy repo.
+        language: fail
+        files: '(?i)(vision-and-business|roadmap-full|strategy)'
+
+      # Strict type-checking, run in the project venv so imports resolve.
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
+      # Tests must pass before commit.
+      - id: pytest
+        name: pytest
+        entry: uv run pytest
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true

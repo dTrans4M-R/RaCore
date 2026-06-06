@@ -1,0 +1,60 @@
+[project]
+name = "racore"
+version = "0.0.0"
+description = "A grounded, real-time, memory-aware retrieval engine with evaluation as a first-class concern."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Tushar", email = "stushar.engineer@gmail.com" }]
+keywords = ["rag", "retrieval", "grounding", "evaluation", "memory", "llm"]
+dependencies = []
+
+[project.urls]
+# Repository = "https://github.com/<you>/RaCore"   # fill in when published
+
+[dependency-groups]
+# Installed by default on `uv sync`. The dev toolchain = the quality gate.
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8",
+    "pre-commit>=3.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/racore"]
+
+# --- ruff: linter + formatter (the single source of truth for style) ---
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F",      # pyflakes + pycodestyle
+    "I",            # import sorting
+    "UP",           # pyupgrade
+    "B",            # bugbear
+    "SIM",          # simplify
+    "TC",           # type-checking imports
+    "RUF",          # ruff-specific
+]
+
+# --- mypy: strict typing ---
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+# --- pytest ---
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

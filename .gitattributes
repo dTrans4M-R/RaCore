@@ -1,0 +1,10 @@
+# Normalize line endings: store everything as LF in the repo, regardless of OS.
+* text=auto eol=lf
+
+# Treat common binaries as binary (never line-ending-normalized).
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.pdf  binary
+*.ico  binary

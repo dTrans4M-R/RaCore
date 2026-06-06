@@ -1,0 +1,59 @@
+# Evaluation — the moat
+
+> 95% of "RAG engineers" have no eval harness. Being able to **prove** retrieval quality, grounding
+> faithfulness, and hallucination rate — with numbers, in CI — is the scarcest, most valuable skill in
+> this space. This is the differentiator, so it's a first-class module from day one.
+
+---
+
+## 1. Principle: measure before you optimize
+
+Every change is judged against a dataset, not vibes. Workflow: **baseline → change → re-measure →
+keep only if a metric improved without regressing another.** A change you can't measure doesn't ship.
+
+## 2. The metric taxonomy
+
+Evaluate each stage independently — a good final answer can hide a broken retriever (and vice-versa).
+
+| Layer | Metric | Question it answers |
+|---|---|---|
+| **Retrieval** | recall@k, nDCG@k, MRR, context precision | Did the right chunks get retrieved, ranked high? |
+| **Grounding** | **faithfulness / attribution**, citation correctness, unsupported-claim rate | Is every claim actually supported by a cited source? |
+| **Answer** | correctness (exact-match where possible, else LLM-judge), completeness | Is the answer right and complete? |
+| **Relevance / refusal** | abstention accuracy, **false-answer-on-no-evidence rate** | Does it say "I don't know" when it should, instead of hallucinating? |
+| **Memory** | stored-fact recall, personalization lift, staleness | Does it remember the user and use it correctly? → [`memory.md`](memory.md) |
+| **Ops** | cost/answer, p50/p95 latency, tokens | Is it affordable and fast enough? |
+
+**Faithfulness is the headline metric** — for each claim in the answer, is there a retrieved span that
+entails it? Measured deterministically where the citation maps to a verbatim span, and with an
+LLM-judge (entailment) for paraphrased support. The unsupported-claim rate is your hallucination gauge.
+
+## 3. Datasets
+
+- **Golden set** — hand-built `(question, expected_answer, supporting_source_span)` rows. Start with
+  10–30; grow over time. This is your regression bedrock.
+- **Public benchmarks** — for the contracts/financial corpus, **CUAD** (contract clause QA) is a
+  strong fit; add a small financial-QA set for numbers. Use them to sanity-check against the field.
+- **Negative controls** — questions whose answer is **not** in the corpus. The system must **abstain**,
+  not fabricate. This directly tests relevance + refusal (and catches the most damaging failure mode).
+- **Synthetic generation** — bootstrap Q→A→span from the corpus with an LLM, then human-verify a sample.
+
+## 4. The harness (`eval/`)
+
+```
+harness.run(dataset, pipeline_config) ->
+    for each row: answer = pipeline.answer(row.question)
+    score: retrieval metrics + grounding metrics + answer/refusal metrics
+    emit: per-row results + aggregate report (JSON + human table)
+```
+
+- **Regression gate:** wire the harness into CI so a PR that drops faithfulness (or lifts the
+  unsupported-claim rate) **fails the build**. This is what turns "I think it's grounded" into a guarantee.
+- **Live report:** the demo surfaces its own grounding numbers — clients and engineers both trust a
+  system that shows its work.
+
+## 5. What "good" looks like (targets to set, then beat)
+
+Set explicit thresholds per phase (e.g. faithfulness ≥ 0.95 on the golden set, false-answer-on-no-
+evidence ≤ 2%, recall@10 ≥ 0.9). The exact numbers matter less than: **they exist, they're tracked
+over time, and a regression blocks merge.**
