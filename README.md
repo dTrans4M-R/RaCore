@@ -13,6 +13,9 @@ with **zero external spend and zero runtime dependencies** by default, and every
 It is a **clean-room, independently-owned** engine: it plugs into any application via an in-process
 Python API or an HTTP service, and shares **no code** with any downstream product.
 
+> *Why the name?* **RaCore** is **RA**G + **Core**, with the *G* quietly dropped — so the engine that's
+> all about retrieval actually rolls off the tongue. 🙂
+
 - **New here?** Read [What is RaCore?](#what-is-racore) → [Key concepts](#key-concepts-plain-english)
   → [Quickstart](#quickstart). That's the 10-minute on-ramp.
 - **Evaluating it?** Skim [The five pillars](#the-five-pillars) and [Project status](#project-status).
