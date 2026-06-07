@@ -67,6 +67,7 @@ flowchart TB
 | `MemoryStore` | per-user read/write/compaction | pg-memory · file-memory |
 | `LLMProvider` | grounded generation (streaming) | anthropic · openai |
 | `EntailmentJudge` | per-claim: does cited evidence support it? | substring · token-overlap · llm-judge |
+| `RelevanceGate` | answer-vs-abstain on the retrieved evidence (proactive refusal) | threshold · llm-gate · cascade |
 | `Evaluator` | score a run against a dataset | retrieval · grounding · answer |
 
 ## 5. The two pipelines (`core/pipeline.py`)
@@ -82,12 +83,14 @@ flowchart LR
     M --> U["understand<br/>rewrite / expand"]
     U --> H["hybrid retrieve<br/>(dense + sparse)"]
     H --> R["rerank<br/>(relevance)"]
-    R --> A["grounding.assemble<br/>(attach evidence + citations)"]
+    R --> G["relevance gate<br/>(answer? / abstain)"]
+    G --> A["grounding.assemble<br/>(attach evidence + citations)"]
     A --> L["llm.generate<br/>(answer w/ inline [n], stream)"]
     L --> V["grounding.verify<br/>(faithfulness → drop/flag unsupported)"]
     V --> W["memory.write<br/>(learn)"]
     W --> O(["Answer + citations + grounding_report"])
     R -.no usable context.-> X["abstain — 'I don't know'"]
+    G -.evidence too weak<br/>(short-circuit generate).-> X
 ```
 
 ## 6. How applications connect

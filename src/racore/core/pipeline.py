@@ -30,6 +30,7 @@ from racore.core.types import (
     IngestReport,
     InputType,
     LLMRequest,
+    RelevanceCheck,
     StageTiming,
 )
 
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
         EntailmentJudge,
         LLMProvider,
         MemoryStore,
+        RelevanceGate,
         Reranker,
         VectorStore,
     )
@@ -92,6 +94,9 @@ class Pipeline:
     memory read/write stages are skipped, so the corpus-only path stays simple.
     ``drop_unsupported`` switches the grounding stage from *flag* (default — unsupported
     claims are reported but kept) to *drop* (the answer is rebuilt from supported claims).
+    ``gate`` is optional: when present it decides — after rerank, before generate — whether
+    the retrieved evidence warrants an answer, and an abstain short-circuits generation
+    (ADR-0021). When absent the pipeline answers whenever any context survives rerank.
     """
 
     embedder: EmbeddingProvider
@@ -102,6 +107,7 @@ class Pipeline:
     judge: EntailmentJudge
     memory: MemoryStore | None = None
     drop_unsupported: bool = False
+    gate: RelevanceGate | None = None
 
     async def ingest(self, source: DocumentSource, tenant_id: str = "default") -> IngestReport:
         """``fetch -> chunk -> embed -> upsert``, timing each stage."""
@@ -127,9 +133,11 @@ class Pipeline:
         return IngestReport(documents=len(documents), chunks=len(chunks), timings=sw.timings)
 
     async def answer(self, query: Query) -> Answer:
-        """``memory.read -> understand -> embed -> retrieve -> rerank -> assemble ->
-        generate -> verify -> memory.write``. Returns a streamable ``Answer`` (ADR-0009),
-        or abstains when no usable context survives reranking."""
+        """``memory.read -> understand -> embed -> retrieve -> rerank -> relevance ->
+        assemble -> generate -> verify -> memory.write``. Returns a streamable ``Answer``
+        (ADR-0009), or abstains when no usable context survives reranking — or, when a
+        relevance gate is configured, when it judges the surviving context too weak to
+        answer (short-circuiting generation)."""
         sw = _Stopwatch()
         use_memory = self.memory is not None and query.user_id is not None
 
@@ -166,6 +174,25 @@ class Pipeline:
                 abstained=True,
                 usages=tuple(query_usages),  # the query embed still cost something
             )
+
+        if self.gate is not None:
+            with sw.stage("relevance"):
+                (should_answer,) = await self.gate.should_answer(
+                    [RelevanceCheck(query=query.text, retrievals=tuple(ranked))]
+                )
+            if not should_answer:
+                # Proactive abstention (ADR-0021): the surviving evidence isn't relevant
+                # enough to answer, so skip the expensive generate/verify stages entirely.
+                # The retrievals are kept so the harness still scores what retrieval reached.
+                return Answer(
+                    text=_ABSTAIN_TEXT,
+                    citations=(),
+                    grounding=GroundingReport(supported_claims=(), unsupported_claims=()),
+                    timings=sw.timings,
+                    retrievals=tuple(ranked),
+                    abstained=True,
+                    usages=(*query_usages, *_drain(self.gate)),
+                )
 
         with sw.stage("assemble"):
             context = grounding.assemble(query.text, ranked)

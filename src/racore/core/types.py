@@ -144,6 +144,20 @@ class ClaimCheck:
 
 
 @dataclass(frozen=True, slots=True)
+class RelevanceCheck:
+    """A query paired with its ranked retrievals — the unit a ``RelevanceGate`` scores.
+
+    The gate decides, per check, whether the retrieved evidence is relevant enough to answer
+    or whether the system should abstain. ``retrievals`` is the reranked list in descending
+    score order; it is empty when nothing survived retrieval, in which case the only honest
+    decision is to abstain.
+    """
+
+    query: str
+    retrievals: tuple[Retrieval, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TokenUsage:
     """Tokens billed for one LLM call, with the model that priced them. ``model`` is empty
     for adapters that don't bill (the $0 stack), so the harness can report a true $0 rather

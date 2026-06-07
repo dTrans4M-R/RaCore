@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         LLMRequest,
         LLMResponse,
         MemoryItem,
+        RelevanceCheck,
         Retrieval,
         TokenUsage,
         Vector,
@@ -106,6 +107,24 @@ class EntailmentJudge(Protocol):
     """
 
     async def judge(self, checks: list[ClaimCheck]) -> list[bool]: ...
+
+
+class RelevanceGate(Protocol):
+    """Decide, per query, whether the retrieved evidence supports answering — or whether the
+    system should abstain ("I don't know").
+
+    The Relevance pillar's *abstain* clause made a pipeline decision rather than a prompt
+    suffix (``docs/architecture.md`` §5). It is slotted between rerank and generate so an
+    abstain **short-circuits the expensive generation stage** — a latency *and* cost win on
+    no-evidence queries, not only a trust feature (ADR-0021).
+
+    Batch-first and ``async`` (ADR-0009): the deterministic ``$0`` gate in
+    ``racore.adapters.relevance`` makes a free arithmetic decision, while a semantic LLM gate
+    drops in behind the same port — and is escalated to only for the uncertain cases — without
+    touching callers. One bool per check, in order: ``True`` = answer, ``False`` = abstain.
+    """
+
+    async def should_answer(self, checks: list[RelevanceCheck]) -> list[bool]: ...
 
 
 class Evaluator(Protocol):

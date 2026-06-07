@@ -250,3 +250,48 @@ cannot stream text you may delete) — the documented exception. (d) Latency sta
 core rebuild; grounding stays first-class without blocking the stream; the engine stays
 provider-agnostic (a local/cached embedder and the streaming adapter are drop-ins). Productionizing
 this is **Phase 5**; the foundation is load-bearing now. Full analysis in [`latency.md`](latency.md).
+
+### ADR-0021 — Relevance gate: proactive abstention as a pipeline decision, built as a cascade
+**Context:** Phase 2 is the *proactive* refusal decision — knowing when **not** to answer. Until now the
+pipeline only abstained on *empty* retrieval and *recorded* a refusal the model volunteered (ADR-0013);
+the `$0` stack still false-answers all three negative controls (refusal accuracy **0.824**). The obvious
+design — abstain when the top retrieval score is below a threshold — was tested first, and **measurement
+killed the premise**: on the lexical `$0` embedder the negative controls *interleave* with the
+legitimate paraphrase rows (top-1 `n1`=0.113, `n2`=0.289, `n3`=0.378 vs answerable `p2`=0.135,
+`p1`/`p5`=0.218, `m1`=0.378). To catch all three negatives needs a floor > 0.378, which falsely refuses
+five answerable rows; to avoid any false refusal needs a floor < 0.135, which catches only one negative.
+**No single threshold separates them**, because a lexical embedder's cosine reflects word overlap, not
+relevance — "surface temperature on Pluto" (no answer) lexically matches the Pluto/surface docs and
+scores *high*. This is the relevance analogue of the substring judge scoring 0.0 on a real model
+(ADR-0017): the cheap deterministic signal has a known blind spot, surfaced by measurement, not hidden.
+
+**Decision:** add a `RelevanceGate` port — `should_answer(checks) -> list[bool]`, async + batch-first
+(ADR-0009) — slotted **between rerank and generate**, and build it as a **cost-escalating cascade**, not
+one gate:
+- **Tier 1 — `ThresholdRelevanceGate`** (stdlib, `$0`, this slice): decides from two cheap signals on
+  the reranked scores — an absolute **floor** (`min_score`) and a **margin** over the runner-up
+  (`min_margin`, so a *flat* distribution the retriever couldn't discriminate doesn't earn a confident
+  answer). Thresholds are **per-embedder** and default to **neutral** (`0.0/0.0` → abstain only on empty
+  retrieval), so wiring the gate in **never introduces a false refusal** on an uncalibrated stack; a
+  semantic embedder (Voyage / local) is where a score threshold separates cleanly, calibrated against the
+  eval harness.
+- **Tier 2 — LLM gate** (paid, next slice): a semantic "is the answer in this evidence?" judgement,
+  escalated to **only for the uncertain gray-zone** cases tier 1 can't decide — the embedder-independent
+  robustness, with the paid-call rate (hence added latency) bounded to the hard minority.
+- A local LLM (Ollama, OpenAI-compatible) drops in behind the same port as a sibling of the paid gate;
+  an in-process cross-encoder is deferred (heaviest dependency in the repo, and Finding D shows no
+  measurable retrieval gap for it yet).
+
+**Latency is a first-class reason for the design, not an afterthought:** the gate sits *before* generate
+so an abstain **short-circuits the dominant ~1.5 s generation stage** — a latency *and* cost win on
+exactly the queries where generating was pointless (and harmful). The `relevance` stage is timed like
+every other (ADR-0010), so its cost is **gated**, and the cascade keeps the expensive tier off the
+common path. (Speculative `gate ∥ generate` for the answerable hot path is a Phase-5 option, ADR-0020.)
+
+**Consequences:** the seam, the `$0` deterministic floor, and the latency short-circuit land now;
+because the default `demo_pipeline()` ships **no** gate, the mock baseline is **unchanged** (refusal
+stays an honest 0.824 — the lexical stack genuinely can't gate on score, and we don't fake it). The gate
+is scored by the existing `RefusalEvaluator` (both error directions), and any calibrated threshold is
+kept only if **refusal accuracy rises without regressing answer correctness** — over-abstention is the
+risk watched. The robust closing of the 0.824 gap comes with the tier-2 LLM gate, validated empirically
+on a real run, mirroring how the LLM entailment judge followed the deterministic judges.

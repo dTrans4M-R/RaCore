@@ -44,10 +44,11 @@ here, never in a consumer repo. See [`CLAUDE.md`](CLAUDE.md) for the house rules
 
 ## Status
 
-**Phase 0 — Foundation: the walking skeleton is live**, and **Phase 1 — Grounding is underway.** A
-thin end-to-end slice runs through the real ports at **$0** external spend — ingest → retrieve →
-rerank → ground → cite → answer — with per-stage timing (ADR-0010) and content-hash IDs (ADR-0011),
-plus an eval harness that prints a baseline over a golden set.
+**Phase 0 — Foundation: the walking skeleton is live**, **Phase 1 — Grounding is in**, and **Phase 2
+— Relevance & refusal has begun.** A thin end-to-end slice runs through the real ports at **$0**
+external spend — ingest → retrieve → rerank → ground → cite → answer — with per-stage timing
+(ADR-0010) and content-hash IDs (ADR-0011), plus an eval harness that prints a baseline over a golden
+set.
 
 Grounding is now a real, pluggable stage (`core/grounding.py`, ADR-0012): each claim is attributed
 to the evidence *it* cited and judged against only that span, unsupported claims are **dropped or
@@ -63,10 +64,15 @@ hides — **nDCG@k ≈ 0.86, MRR ≈ 0.89**, both below recall, because the righ
 retrieved but not ranked first (ADR-0015). Those are the numbers a real embedding adapter, hybrid
 retrieval, and a reranker must beat. The first of these — an opt-in **Voyage** semantic embedder —
 is now wired behind the `EmbeddingProvider` port (ADR-0016); run it with `--embedder voyage` to
-measure the lift, while the `$0` mock stays the default. Refusal accuracy is intentionally **below
-1.0** — there is no abstention logic yet, so the
-harness *surfaces* that gap for Phase 2 rather than hiding it. Build order and per-phase "definition
-of done" are in [`docs/roadmap.md`](docs/roadmap.md).
+measure the lift, while the `$0` mock stays the default. Refusal accuracy is intentionally **0.824**
+on the `$0` stack, and Phase 2's proactive abstention is now underway: a `RelevanceGate` port and a
+deterministic threshold gate (ADR-0021) slot between rerank and generate and **short-circuit
+generation** when the evidence is too weak — a latency *and* cost win, not only a trust feature. But a
+*lexical* embedder's scores don't separate no-answer questions from faithful paraphrases (measured:
+the negative controls interleave with the paraphrase rows), so the default mock stack honestly carries
+no gate and the gap stays *surfaced* rather than faked — it closes with a semantic embedder and the
+opt-in LLM gate behind the same port. Build order and per-phase "definition of done" are in
+[`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
 
