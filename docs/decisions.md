@@ -295,3 +295,14 @@ is scored by the existing `RefusalEvaluator` (both error directions), and any ca
 kept only if **refusal accuracy rises without regressing answer correctness** — over-abstention is the
 risk watched. The robust closing of the 0.824 gap comes with the tier-2 LLM gate, validated empirically
 on a real run, mirroring how the LLM entailment judge followed the deterministic judges.
+**Validated (2026-06-07, real Claude gate, mock embedder + mock generator to isolate the gate):**
+`--gate llm` took refusal accuracy **0.824 → 1.000** (false-answer-on-no-evidence **1.0 → 0.0**) with
+answer correctness **held at 0.857** and faithfulness/citation unchanged — it abstains on all three
+negative controls and lets every answerable row through, on the *lexical* embedder where no score
+threshold can, confirming the gate is embedder-independent. The cost is honest (~$0.00022/answer, the
+gate's tokens priced via `UsageReporter`) and the `relevance` stage is ~1.1 s/query — every query pays,
+which is exactly the cascade's reason to exist: `--gate cascade --gate-high 0.5` held refusal at
+**1.000** while cutting gate cost to **~$0.00016/answer** (138 vs 195 tokens/answer) by answering the
+confident high-score rows for free. On a semantic embedder the free bands widen, realizing the latency
+win; the residual `p2`/`p5` wrong answers are the mock extractive generator quoting a distractor
+(Finding A), not the gate, which correctly let them through.

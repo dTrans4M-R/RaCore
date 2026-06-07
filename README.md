@@ -70,9 +70,11 @@ deterministic threshold gate (ADR-0021) slot between rerank and generate and **s
 generation** when the evidence is too weak — a latency *and* cost win, not only a trust feature. But a
 *lexical* embedder's scores don't separate no-answer questions from faithful paraphrases (measured:
 the negative controls interleave with the paraphrase rows), so the default mock stack honestly carries
-no gate and the gap stays *surfaced* rather than faked — it closes with a semantic embedder and the
-opt-in LLM gate behind the same port. Build order and per-phase "definition of done" are in
-[`docs/roadmap.md`](docs/roadmap.md).
+no gate and the gap stays *surfaced* rather than faked. The opt-in **LLM gate** behind the same port
+closes it by judging relevance on *meaning*: on a real run it lifts refusal accuracy **0.824 → 1.000**
+with answer correctness held at 0.857 — even on the lexical embedder, where no score threshold can. A
+**cascade** runs that paid gate only in the uncertain gray zone, so the confident cases stay free
+(ADR-0021). Build order and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
 
@@ -201,6 +203,31 @@ many LLM adapters. OpenAI, Cohere, or a **local model** (Ollama `nomic-embed-tex
 same way with zero core change. The `$0` `MockEmbeddingProvider` stays the default; `--embedder voyage`
 opts in. Model and key are configurable via `VoyageConfig` (default `voyage-3.5`); override the model
 with `--embed-model <id>`. The core and the default test path never import the SDK (ADR-0016).
+
+### Proactive abstention with a relevance gate (opt-in)
+
+The Relevance pillar's hard clause is knowing **when not to answer**. The deterministic
+`ThresholdRelevanceGate` (`$0`) abstains from the reranked scores alone, but a *lexical* embedder's
+scores don't separate a no-answer question from a faithful paraphrase, so on the mock stack it stays
+neutral (it never forces a false refusal). The **LLM gate** decides on *meaning* instead, so it works
+regardless of embedder. The gate sits between rerank and generate, so an abstain **short-circuits the
+expensive generation stage** — a latency *and* cost win, not only a trust feature:
+
+```bash
+uv run --extra anthropic --env-file .env python -m racore.eval --gate llm -v
+# bound the paid call to the uncertain gray zone — confident high-score rows answer for free:
+uv run --extra anthropic --env-file .env python -m racore.eval --gate cascade --gate-high 0.5
+```
+
+On a real run (mock embedder + mock generator, to isolate the gate) `--gate llm` lifts **refusal
+accuracy 0.824 → 1.000** — abstaining on all three no-evidence controls and letting every answerable
+row through — with **answer correctness held at 0.857** and faithfulness/citation still 1.0, on the
+lexical embedder where no score threshold can. The gate's tokens are priced into cost/answer
+(~$0.00022) like every billed component (ADR-0018); the `relevance` stage is ~1.1 s/query, which is why
+`--gate cascade` exists — it escalates to the paid gate only in the gray band
+`[--gate-min-score, --gate-high)`, holding refusal at 1.000 while cutting gate cost (~$0.00016/answer
+here) by answering the confident cases free. The same port takes a **local** LLM (Ollama,
+OpenAI-compatible) with zero core change (ADR-0021).
 
 ## License
 

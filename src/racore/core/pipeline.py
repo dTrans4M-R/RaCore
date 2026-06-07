@@ -212,9 +212,10 @@ class Pipeline:
             with sw.stage("memory.write"):
                 await self.memory.write(query.tenant_id, query.user_id, _learn(query, response))
 
-        # Sum every billed component this answer touched: query embed, the generator, and the judge.
+        # Sum every billed component this answer touched: query embed, the relevance gate (if it
+        # ran and bills), the generator, and the judge.
         generator_usage = [response.usage] if response.usage is not None else []
-        usages = (*query_usages, *generator_usage, *_drain(self.judge))
+        usages = (*query_usages, *_drain(self.gate), *generator_usage, *_drain(self.judge))
         return Answer(
             text=outcome.text,
             citations=outcome.citations,

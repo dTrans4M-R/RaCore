@@ -20,8 +20,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from racore.core.ports import UsageReporter
+
 if TYPE_CHECKING:
-    from racore.core.types import RelevanceCheck
+    from racore.core.ports import RelevanceGate
+    from racore.core.types import RelevanceCheck, TokenUsage
 
 
 class ThresholdRelevanceGate:
@@ -59,3 +62,52 @@ class ThresholdRelevanceGate:
         # A lone retrieval has no competition, so its margin is measured against zero.
         runner_up = check.retrievals[1].score if len(check.retrievals) > 1 else 0.0
         return (top - runner_up) >= self._min_margin
+
+
+class CascadeRelevanceGate:
+    """Escalate to an expensive gate only for the uncertain middle band of retrieval scores.
+
+    The confident cases are decided for free from the reranked top score: below ``low`` →
+    abstain (no usable evidence), at or above ``high`` → answer (strong evidence). Only scores
+    in ``[low, high)`` — the gray zone where the cheap signal can't be trusted — are escalated
+    to ``fallback`` (e.g. the LLM gate). This bounds the paid-call rate, and so the added
+    latency, to the hard minority rather than every query (ADR-0021).
+
+    With ``low=0.0`` and ``high=1.0`` every non-empty query falls in the gray zone, so the
+    fallback decides everything (the gate still abstains for free on empty retrieval); raise
+    ``low``/lower ``high`` against the eval harness to widen the free bands for your embedder.
+    """
+
+    def __init__(self, fallback: RelevanceGate, *, low: float = 0.0, high: float = 1.0) -> None:
+        if not 0.0 <= low <= high <= 1.0:
+            raise ValueError("require 0.0 <= low <= high <= 1.0")
+        self._fallback = fallback
+        self._low = low
+        self._high = high
+
+    async def should_answer(self, checks: list[RelevanceCheck]) -> list[bool]:
+        decisions: list[bool | None] = []
+        gray_indices: list[int] = []
+        gray_checks: list[RelevanceCheck] = []
+        for index, check in enumerate(checks):
+            top = check.retrievals[0].score if check.retrievals else 0.0
+            if not check.retrievals or top < self._low:
+                decisions.append(False)  # confident abstain — no paid call
+            elif top >= self._high:
+                decisions.append(True)  # confident answer — no paid call
+            else:
+                decisions.append(None)  # gray zone — resolved by the fallback below
+                gray_indices.append(index)
+                gray_checks.append(check)
+        if gray_checks:
+            verdicts = await self._fallback.should_answer(gray_checks)
+            for index, verdict in zip(gray_indices, verdicts, strict=True):
+                decisions[index] = verdict
+        return [bool(decision) for decision in decisions]
+
+    def drain_usage(self) -> list[TokenUsage]:
+        """Forward the fallback's billed usage so the pipeline prices the gray-zone calls
+        (the ``UsageReporter`` port). The free tiers bill nothing."""
+        if isinstance(self._fallback, UsageReporter):
+            return self._fallback.drain_usage()
+        return []

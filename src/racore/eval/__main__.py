@@ -15,6 +15,7 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from racore.adapters.judges import SubstringEntailmentJudge, TokenOverlapEntailmentJudge
+from racore.adapters.relevance import CascadeRelevanceGate, ThresholdRelevanceGate
 from racore.eval.datasets import golden_dataset, golden_source
 from racore.eval.harness import HarnessReport, demo_pipeline, run
 from racore.eval.metrics import default_evaluators
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from racore.core.pipeline import Pipeline
-    from racore.core.ports import EntailmentJudge
+    from racore.core.ports import EntailmentJudge, RelevanceGate
 
 _JUDGES: dict[str, Callable[[], EntailmentJudge]] = {
     "substring": SubstringEntailmentJudge,
@@ -42,14 +43,42 @@ def _make_judge(judge_kind: str, model: str | None) -> EntailmentJudge:
     return _JUDGES[judge_kind]()
 
 
+def _make_gate(
+    gate_kind: str,
+    model: str | None,
+    min_score: float,
+    margin: float,
+    high: float,
+) -> RelevanceGate | None:
+    """Build the selected relevance gate. 'none' (default) leaves the pipeline ungated;
+    'llm'/'cascade' are opt-in and lazily import the SDK."""
+    if gate_kind == "none":
+        return None
+    if gate_kind == "threshold":
+        return ThresholdRelevanceGate(min_score=min_score, min_margin=margin)
+    from racore.adapters.llm_anthropic import AnthropicConfig
+    from racore.adapters.relevance_anthropic import AnthropicRelevanceGate
+
+    config = AnthropicConfig(model=model) if model else AnthropicConfig()
+    llm_gate = AnthropicRelevanceGate(config)
+    if gate_kind == "llm":
+        return llm_gate
+    # cascade: free score-band decisions, with the LLM gate only in the gray zone [min_score, high).
+    return CascadeRelevanceGate(llm_gate, low=min_score, high=high)
+
+
 def _build_pipeline(
     llm_kind: str,
     judge_kind: str,
     model: str | None = None,
     embedder_kind: str = "mock",
     embed_model: str | None = None,
+    gate_kind: str = "none",
+    gate_min_score: float = 0.0,
+    gate_margin: float = 0.0,
+    gate_high: float = 1.0,
 ) -> Pipeline:
-    """Start from the $0 stack and swap only the embedder/LLM/judge that were selected."""
+    """Start from the $0 stack and swap only the embedder/LLM/judge/gate that were selected."""
     pipeline = dataclasses.replace(demo_pipeline(), judge=_make_judge(judge_kind, model))
     if embedder_kind == "voyage":
         # Lazy import keeps the SDK optional — the mock path never reaches here.
@@ -62,6 +91,9 @@ def _build_pipeline(
 
         config = AnthropicConfig(model=model) if model else AnthropicConfig()
         pipeline = dataclasses.replace(pipeline, llm=AnthropicLLM(config))
+    gate = _make_gate(gate_kind, model, gate_min_score, gate_margin, gate_high)
+    if gate is not None:
+        pipeline = dataclasses.replace(pipeline, gate=gate)
     return pipeline
 
 
@@ -71,8 +103,22 @@ async def _run(
     model: str | None = None,
     embedder_kind: str = "mock",
     embed_model: str | None = None,
+    gate_kind: str = "none",
+    gate_min_score: float = 0.0,
+    gate_margin: float = 0.0,
+    gate_high: float = 1.0,
 ) -> HarnessReport:
-    pipeline = _build_pipeline(llm_kind, judge_kind, model, embedder_kind, embed_model)
+    pipeline = _build_pipeline(
+        llm_kind,
+        judge_kind,
+        model,
+        embedder_kind,
+        embed_model,
+        gate_kind,
+        gate_min_score,
+        gate_margin,
+        gate_high,
+    )
     await pipeline.ingest(golden_source())
     return await run(pipeline, golden_dataset(), default_evaluators())
 
@@ -109,8 +155,34 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=None,
-        help="override the Anthropic model id (used by --llm anthropic and --judge llm), "
-        "e.g. claude-haiku-4-5.",
+        help="override the Anthropic model id (used by --llm anthropic, --judge llm, and the "
+        "--gate llm/cascade gates), e.g. claude-haiku-4-5.",
+    )
+    parser.add_argument(
+        "--gate",
+        choices=["none", "threshold", "llm", "cascade"],
+        default="none",
+        help="relevance gate (proactive abstention): 'none' (default), 'threshold' ($0, "
+        "score + margin), 'llm' (semantic, opt-in), or 'cascade' (free score bands + the LLM "
+        "gate only in the gray zone).",
+    )
+    parser.add_argument(
+        "--gate-min-score",
+        type=float,
+        default=0.0,
+        help="relevance gate score floor (threshold gate) and cascade gray-zone lower bound.",
+    )
+    parser.add_argument(
+        "--gate-margin",
+        type=float,
+        default=0.0,
+        help="relevance gate: required margin of the top score over the runner-up (threshold).",
+    )
+    parser.add_argument(
+        "--gate-high",
+        type=float,
+        default=1.0,
+        help="cascade gray-zone upper bound: a top score >= this answers without a paid call.",
     )
     parser.add_argument(
         "-v",
@@ -120,12 +192,30 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    report = asyncio.run(_run(args.llm, args.judge, args.model, args.embedder, args.embed_model))
-    header = f"# embedder={args.embedder}  llm={args.llm}  judge={args.judge}"
+    report = asyncio.run(
+        _run(
+            args.llm,
+            args.judge,
+            args.model,
+            args.embedder,
+            args.embed_model,
+            args.gate,
+            args.gate_min_score,
+            args.gate_margin,
+            args.gate_high,
+        )
+    )
+    header = f"# embedder={args.embedder}  llm={args.llm}  judge={args.judge}  gate={args.gate}"
     if args.embedder == "voyage" and args.embed_model:
         header += f"  embed_model={args.embed_model}"
     if args.llm == "anthropic" and args.model:
         header += f"  model={args.model}"
+    if args.gate in {"threshold", "cascade"}:
+        header += f"  gate_min_score={args.gate_min_score}"
+    if args.gate == "threshold" and args.gate_margin:
+        header += f"  gate_margin={args.gate_margin}"
+    if args.gate == "cascade":
+        header += f"  gate_high={args.gate_high}"
     print(header)
     print(report.render(verbose=args.verbose))
 

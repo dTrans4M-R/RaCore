@@ -19,7 +19,8 @@ from racore.adapters.judges import SubstringEntailmentJudge, TokenOverlapEntailm
 from racore.adapters.llm import ExtractiveLLM
 from racore.adapters.llm_anthropic import AnthropicConfig, AnthropicLLM
 from racore.adapters.memory import FileMemoryStore
-from racore.adapters.relevance import ThresholdRelevanceGate
+from racore.adapters.relevance import CascadeRelevanceGate, ThresholdRelevanceGate
+from racore.adapters.relevance_anthropic import AnthropicRelevanceGate
 from racore.adapters.rerankers import NoopReranker
 from racore.adapters.sources import InMemoryDocumentSource
 from racore.adapters.vectorstores import InMemoryVectorStore
@@ -28,6 +29,8 @@ __all__ = [
     "AnthropicConfig",
     "AnthropicEntailmentJudge",
     "AnthropicLLM",
+    "AnthropicRelevanceGate",
+    "CascadeRelevanceGate",
     "ExtractiveLLM",
     "FileMemoryStore",
     "FixedWindowChunker",
