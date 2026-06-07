@@ -62,10 +62,16 @@ harness.run(dataset, pipeline_config) ->
     emit: per-row results + aggregate report (JSON + human table)
 ```
 
-- **Regression gate:** wire the harness into CI so a PR that drops faithfulness (or lifts the
-  unsupported-claim rate) **fails the build**. This is what turns "I think it's grounded" into a guarantee.
-- **Live report:** the demo surfaces its own grounding numbers — clients and engineers both trust a
-  system that shows its work.
+- **Regression gate:** the pre-commit gate runs the full test suite — which asserts the key numbers,
+  including the honest ones like memory's 0.625 floor — locally and in CI, so a change that drops a
+  metric **fails the build**. Critically, **latency and cost are gated too** (ADR-0010): a PR that
+  regresses p95 latency or cost-per-answer fails exactly like one that drops faithfulness. This is what
+  turns "I think it's grounded" into a guarantee.
+- **Determinism:** the `$0` stack is reproducible end to end, and anything time-dependent takes its
+  clock as an **injected argument** rather than reading the wall clock (the fact-vs-judgment split,
+  ADR-0024) — the precondition for gating on a number that must mean the same thing a year from now.
+- **Live report:** the harness (and the service's per-request observability, ADR-0033) surface the
+  numbers — clients and engineers both trust a system that shows its work.
 
 ## 5. What "good" looks like (targets to set, then beat)
 
