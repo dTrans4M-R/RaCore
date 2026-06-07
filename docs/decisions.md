@@ -576,3 +576,38 @@ the old one's provenance) and recency-relevance-salience memory ranking (slice 2
 personalization-lift metric + `--memory` CLI and the opt-in paid LLM extractor, plus compaction/TTL
 (slice 3). This slice builds the loop and proves the lift; the next two make conflict, ranking, and the
 headline number first-class.
+
+### ADR-0027 — Conflict resolution by slot; salience-aware memory ranking (Phase 4, slice 2)
+
+**Context.** Slice 1 gave each memory a `key` slot but did not yet act on it, and `read` ranked by pure
+relevance with recency as the only tie-break. Two `docs/memory.md` §3 hard parts remained: **conflict
+resolution** ("a new fact contradicts an old one → supersede, don't append both; keep the old one's
+provenance for audit") and **ranking** ("by recency × relevance × salience, not pure similarity"). Without
+conflict handling, a user correcting a fact (`my name is Ada` → `actually, my name is Bob`) would leave
+*both* in memory and the reader could surface the stale one.
+
+**Decision.** Two changes, plus an honest deferral.
+
+1. **Supersede-on-write, in the store.** `FileMemoryStore.write` is where set consistency is enforced: when
+   an incoming item has a non-empty `key`, every stored non-superseded item in the same slot gets its
+   `superseded_by` set to the new item's ID. The superseded item is **kept on disk** (provenance for audit);
+   `read` already filters `superseded_by != None`, so it simply stops surfacing. Keyless facts (e.g. an
+   open-ended preference with no stable slot) accumulate rather than collide. The store — not the extractor —
+   owns this because it owns the persisted set; a `pg-memory` adapter mirrors it with a SQL update.
+
+2. **Salience-aware ranking.** `read` now sorts by `(relevance, salience, recency)` as ordered keys, so
+   among equally-relevant facts the more salient one leads — ranking is no longer pure similarity.
+
+3. **Recency-weighted ranking deferred to slice 3 — deliberately.** The full blend where a *fresh relevant*
+   fact can outrank a *stale exact* one needs (a) an injected `now` so the judgment stays deterministic
+   (the ADR-0024 rule), and (b) a **dated memory corpus** to measure the weighting against. Shipping a tuned
+   weight vector with no number to justify it would violate the house rule ("no change ships without a
+   number"). So recency ranking is paired with the slice-3 harness lift metric and dated scenarios that can
+   actually measure it — exactly as Phase 3 paired its freshness *filter* with the live connector that gave
+   it real dates.
+
+**Measured (`tests/test_memory.py`, `tests/test_memory_pipeline.py`; $0, no API).** Supersede keeps one
+current value per slot while retaining the old one on disk with its `superseded_by` link and original
+provenance; distinct slots and keyless preferences coexist without false collisions; `read` breaks an
+equal-relevance tie by salience. End to end through the pipeline, a user correcting their name is answered
+"Bob" and never "Ada" — extractor `key` + store supersede + injection composing. Gate green: **106 passed**.

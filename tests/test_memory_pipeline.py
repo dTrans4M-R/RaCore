@@ -95,6 +95,23 @@ async def _no_corpus_pollution(tmp_path: Path) -> None:
     assert all(not c.evidence.source.startswith("memory/") for c in ans.citations)
 
 
+def test_correcting_a_fact_supersedes_the_old_one_end_to_end(tmp_path: Path) -> None:
+    asyncio.run(_correction_supersedes(tmp_path))
+
+
+async def _correction_supersedes(tmp_path: Path) -> None:
+    # The extractor's slot `key` + the store's supersede + memory injection compose: a user who
+    # corrects a fact is answered with the new value, never the contradicted old one.
+    pipe = _pipeline(tmp_path)
+    await pipe.ingest(InMemoryDocumentSource(_CORPUS), tenant_id="t")
+    await pipe.answer(Query(text="My name is Ada.", tenant_id="t", user_id="u"))
+    await pipe.answer(Query(text="Actually, my name is Bob.", tenant_id="t", user_id="u"))
+
+    ans = await pipe.answer(Query(text="What is my name?", tenant_id="t", user_id="u"))
+    assert "Bob" in ans.text
+    assert "Ada" not in ans.text
+
+
 def test_a_stated_fact_is_learned_even_when_the_turn_abstains(tmp_path: Path) -> None:
     asyncio.run(_learns_on_abstain(tmp_path))
 

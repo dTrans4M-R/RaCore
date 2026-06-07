@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from racore.core.types import MemoryItem, MemoryKind, Vector
@@ -31,8 +32,16 @@ class FileMemoryStore:
     async def read(self, tenant_id: str, user_id: str, query: str, k: int) -> list[MemoryItem]:
         items = [item for item in self._load(tenant_id, user_id) if item.superseded_by is None]
         query_tokens = _tokens(query)
+        # Rank by relevance, then salience, then recency — not pure similarity (docs/memory.md §3):
+        # among equally-relevant facts the more salient one leads. The full recency-weighted blend
+        # (where a fresh relevant fact can outrank a stale exact one) needs an injected `now` and a
+        # dated corpus to measure against, and lands in slice 3 (ADR-0027).
         items.sort(
-            key=lambda item: (_overlap(query_tokens, item.content), item.last_used_at),
+            key=lambda item: (
+                _overlap(query_tokens, item.content),
+                item.salience,
+                item.last_used_at,
+            ),
             reverse=True,
         )
         return items[:k]
@@ -42,6 +51,17 @@ class FileMemoryStore:
             return
         merged = {item.id: item for item in self._load(tenant_id, user_id)}
         for item in items:
+            # Conflict resolution (docs/memory.md §3): a newer fact in the same slot supersedes the
+            # older rather than contradicting it. The superseded item is kept on disk with its
+            # provenance for audit; `read` filters it out. Keyless facts just accumulate.
+            if item.key:
+                for prior_id, prior in merged.items():
+                    if (
+                        prior.superseded_by is None
+                        and prior.key == item.key
+                        and prior_id != item.id
+                    ):
+                        merged[prior_id] = replace(prior, superseded_by=item.id)
             merged[item.id] = item  # idempotent upsert by content/turn-derived ID.
         self._dump(tenant_id, user_id, list(merged.values()))
 
