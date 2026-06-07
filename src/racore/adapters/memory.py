@@ -72,6 +72,7 @@ def _encode(item: MemoryItem) -> dict[str, Any]:
         "kind": item.kind.value,
         "content": item.content,
         "source": item.source,
+        "key": item.key,
         "salience": item.salience,
         "embedding": list(item.embedding),
         "created_at": item.created_at,
@@ -89,6 +90,7 @@ def _decode(entry: Any) -> MemoryItem:
         kind=MemoryKind(entry["kind"]),
         content=str(entry["content"]),
         source=str(entry["source"]),
+        key=str(entry.get("key", "")),  # tolerate pre-ADR-0026 files written without a slot.
         salience=float(entry["salience"]),
         embedding=embedding,
         created_at=float(entry["created_at"]),

@@ -307,11 +307,32 @@ class MemoryItem:
     kind: MemoryKind
     content: str
     source: str  # turn id / document ref — provenance; memory is grounded too.
+    # The slot this fact occupies, when it has a stable one ("name", "fiscal year"). A newer fact
+    # with the same non-empty key supersedes the older (conflict resolution, ADR-0026 slice 2);
+    # an empty key means the fact just accumulates. Not part of the content-hash ID.
+    key: str = ""
     salience: float = 0.0
     embedding: Vector = ()
     created_at: float = 0.0
     last_used_at: float = 0.0
     superseded_by: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryTurn:
+    """One conversational turn handed to a ``MemoryExtractor`` (the write policy, ADR-0026).
+
+    ``user_text`` is the primary signal — durable memories come from what the user states about
+    themselves — and ``source`` is the provenance the proposed memory carries, so a remembered
+    fact can always be traced back to the turn it came from (memory is grounded too,
+    ``docs/memory.md`` §6). ``answer_text`` is the system's reply, used for episodic summaries
+    later; the $0 rule-based extractor reads only ``user_text``."""
+
+    tenant_id: str
+    user_id: str
+    source: str
+    user_text: str
+    answer_text: str = ""
 
 
 # --- evaluation -------------------------------------------------------------------

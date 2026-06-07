@@ -23,15 +23,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from racore.core import grounding
+from racore.core.ids import content_id
 from racore.core.ports import UsageReporter
 from racore.core.types import (
     Answer,
+    Chunk,
     EmbeddedChunk,
     GroundingReport,
     IngestReport,
     InputType,
     LLMRequest,
+    MemoryTurn,
     RelevanceCheck,
+    Retrieval,
     StageTiming,
 )
 
@@ -44,12 +48,13 @@ if TYPE_CHECKING:
         EmbeddingProvider,
         EntailmentJudge,
         LLMProvider,
+        MemoryExtractor,
         MemoryStore,
         RelevanceGate,
         Reranker,
         VectorStore,
     )
-    from racore.core.types import LLMResponse, MemoryItem, Query, TokenUsage
+    from racore.core.types import MemoryItem, Query, TokenUsage
 
 _SYSTEM = (
     "Answer the question using only the numbered evidence provided. Be concise: state each fact "
@@ -65,6 +70,9 @@ _ABSTAIN_TEXT = "I don't know — I couldn't find supporting evidence in the cor
 # abstention so a correct refusal isn't scored as an ungrounded answer — a measurement-integrity
 # signal (ADR-0013), distinct from the Phase 2 capability of *deciding* when to abstain.
 _REFUSAL_RE = re.compile(r"^\W*i\s+don'?t\s+know\b", re.IGNORECASE)
+
+# Token relevance for memory injection: which remembered facts bear on the current query.
+_WORD_RE = re.compile(r"\w+")
 
 
 class _Stopwatch:
@@ -92,7 +100,9 @@ class Pipeline:
     """Holds the adapters and orchestrates ingest/answer over them.
 
     ``memory`` is optional: when absent (or when a query carries no ``user_id``) the
-    memory read/write stages are skipped, so the corpus-only path stays simple.
+    memory read/write stages are skipped, so the corpus-only path stays simple. When present
+    with an ``extractor``, ``answer()`` reads the user's relevant memories in (as labelled
+    grounded evidence) and learns durable facts from the turn back out (ADR-0026).
     ``drop_unsupported`` switches the grounding stage from *flag* (default — unsupported
     claims are reported but kept) to *drop* (the answer is rebuilt from supported claims).
     ``gate`` is optional: when present it decides — after rerank, before generate — whether
@@ -107,6 +117,7 @@ class Pipeline:
     llm: LLMProvider
     judge: EntailmentJudge
     memory: MemoryStore | None = None
+    extractor: MemoryExtractor | None = None
     drop_unsupported: bool = False
     gate: RelevanceGate | None = None
 
@@ -196,7 +207,15 @@ class Pipeline:
         with sw.stage("rerank"):
             ranked = await self.reranker.rerank(query.text, candidates, query.k)
 
+        if use_memory:
+            # The user's relevant memories enter the same grounded-evidence channel as the corpus
+            # (labelled by source), so the $0 model can use them and grounding still verifies them
+            # — and a personal question can be answered even when retrieval found nothing. Memories
+            # irrelevant to this query are filtered, so they never displace a corpus answer.
+            ranked = _inject_memory(query.text, memories, ranked)
+
         if not ranked:
+            await self._remember(sw, query)
             return Answer(
                 text=_ABSTAIN_TEXT,
                 citations=(),
@@ -216,6 +235,7 @@ class Pipeline:
                 # Proactive abstention (ADR-0021): the surviving evidence isn't relevant
                 # enough to answer, so skip the expensive generate/verify stages entirely.
                 # The retrievals are kept so the harness still scores what retrieval reached.
+                await self._remember(sw, query)
                 return Answer(
                     text=_ABSTAIN_TEXT,
                     citations=(),
@@ -239,10 +259,7 @@ class Pipeline:
                 response, context, self.judge, drop_unsupported=self.drop_unsupported
             )
 
-        if use_memory:
-            assert self.memory is not None and query.user_id is not None  # narrowed above
-            with sw.stage("memory.write"):
-                await self.memory.write(query.tenant_id, query.user_id, _learn(query, response))
+        await self._remember(sw, query)
 
         # Sum every billed component this answer touched: query embed, the relevance gate (if it
         # ran and bills), the generator, and the judge.
@@ -258,22 +275,75 @@ class Pipeline:
             abstained=_is_refusal(response.text),
         )
 
+    async def _remember(self, sw: _Stopwatch, query: Query) -> None:
+        """Learn durable facts from this turn (the write policy, ADR-0026), on every exit path.
+
+        A no-op unless a memory store *and* an extractor are configured and the query is scoped to
+        a user. It runs even when the pipeline abstains: a user stating a fact should be remembered
+        whether or not this turn produced an answer."""
+        if self.memory is None or self.extractor is None or query.user_id is None:
+            return
+        with sw.stage("memory.write"):
+            turn = MemoryTurn(
+                tenant_id=query.tenant_id,
+                user_id=query.user_id,
+                source=content_id(query.tenant_id, query.user_id, query.text),
+                user_text=query.text,
+            )
+            items = await self.extractor.extract([turn])
+            if items:
+                await self.memory.write(query.tenant_id, query.user_id, items)
+
 
 # --- stage helpers ----------------------------------------------------------------
 
 
 def _understand(query: Query, memories: list[MemoryItem]) -> str:
-    """Query-understanding seam. Phase 0 is the identity transform; query rewrite and
-    memory-conditioned expansion land in Phase 2. ``memories`` is accepted now so the
-    signature is stable once it starts to matter."""
+    """Query-understanding seam (identity transform). Memory personalizes the answer through
+    evidence injection (see ``_inject_memory``), not query rewriting; a memory-conditioned query
+    expansion can still slot in here later. ``memories`` is accepted so the signature is stable."""
     return query.text
 
 
-def _learn(query: Query, response: LLMResponse) -> list[MemoryItem]:
-    """Write policy for Phase 0: remember nothing. A salience-gated extractor that
-    proposes memories from the turn lands in Phase 4 (``docs/memory.md`` §3). Kept as a
-    seam so the ``memory.write`` stage and its timing already exist."""
-    return []
+def _inject_memory(
+    query_text: str, memories: list[MemoryItem], ranked: list[Retrieval]
+) -> list[Retrieval]:
+    """Prepend the memories relevant to *this* query as top-priority, labelled evidence (ADR-0026).
+
+    Memory is the user's own stated facts, so a relevant memory leads the corpus evidence: a
+    personal question is answered from what we know about the user. Relevance is gated by token
+    overlap, so a memory unrelated to this query never displaces a corpus answer; principled
+    recency-relevance-salience ranking is the next slice. Each kept memory becomes a ``Retrieval``
+    over a synthetic chunk sourced ``memory/<turn>`` — the same grounded-evidence channel as the
+    corpus, kept distinct by that label — so grounding verifies it like any other evidence and a
+    remembered fact is never invented (``docs/memory.md`` §5)."""
+    injected = [
+        Retrieval(
+            chunk=Chunk(
+                id=item.id,
+                doc_id=item.id,
+                text=item.content,
+                ordinal=0,
+                start=0,
+                end=len(item.content),
+                source=f"memory/{item.source}",
+                created_at=item.created_at,
+            ),
+            score=1.0 + item.salience,  # above corpus cosine scores: a relevant memory leads.
+        )
+        for item in memories
+        if _overlap(query_text, item.content) > 0
+    ]
+    return injected + ranked
+
+
+def _tokens(text: str) -> set[str]:
+    return set(_WORD_RE.findall(text.lower()))
+
+
+def _overlap(query_text: str, content: str) -> int:
+    """Token overlap between a query and a memory's content — the relevance gate for injection."""
+    return len(_tokens(query_text) & _tokens(content))
 
 
 def _is_refusal(text: str) -> bool:

@@ -29,7 +29,10 @@ and the answer) and written **after** (it learns from the turn).
 ## 3. The hard parts (where most implementations fail)
 
 - **Write policy — what's worth remembering.** Not every turn. A **salience** judgement (stable,
-  reusable, user-specific) decides what gets stored, so memory doesn't bloat into noise.
+  reusable, user-specific) decides what gets stored, so memory doesn't bloat into noise. *Built
+  (ADR-0026):* a pluggable `MemoryExtractor` port — a $0 rule-based floor for explicit
+  self-statements (precision over recall), with a salience floor as the gate; an LLM extractor for
+  implicit facts is the paid drop-in.
 - **Compaction / summarization.** Periodically fold many episodic items into concise summaries; cap
   size. Unbounded memory is as bad as none.
 - **Conflict resolution.** New fact contradicts an old one → **supersede**, don't append both (mirror
@@ -48,6 +51,7 @@ MemoryItem:
   type: profile | semantic | episodic | working
   content: str               # the fact / summary, concise
   source: str                # turn id / document ref — provenance
+  key: str                   # the slot a fact occupies ("name"); a newer same-key fact supersedes
   salience: float            # why it was kept
   embedding: Vector          # for relevance retrieval
   created_at, last_used_at   # for recency + decay

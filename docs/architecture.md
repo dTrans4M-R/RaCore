@@ -65,6 +65,7 @@ flowchart TB
 | `Chunker` | document → structure-aware chunks | structural (page/section) · fixed-window |
 | `DocumentSource` | fetch + extract raw documents, with a freshness timestamp | filesystem · inmemory · pdf · sec-edgar · web · s3 |
 | `MemoryStore` | per-user read/write/compaction | pg-memory · file-memory |
+| `MemoryExtractor` | turn → durable per-user memories (the write policy) | rule-based ($0) · llm |
 | `LLMProvider` | grounded generation (streaming) | anthropic · openai |
 | `EntailmentJudge` | per-claim: does cited evidence support it? | substring · token-overlap · llm-judge |
 | `RelevanceGate` | answer-vs-abstain on the retrieved evidence (proactive refusal) | threshold · anthropic · openai (local/hosted) · cascade |
@@ -79,7 +80,12 @@ re-index is incremental and leaves no stale content (ADR-0023). That freshness t
 `Document → Chunk → Retrieval`, so the age of an answer's evidence is visible on the `Answer`; staleness is
 judged against an explicit `now` (`core/freshness.py`), never the wall clock, keeping eval deterministic (ADR-0024).
 
-**`answer(query, tenant, user)`** — grounding, relevance, and memory are first-class:
+**`answer(query, tenant, user)`** — grounding, relevance, and memory are first-class. When a query
+carries a `user_id`, `memory.read` injects the user's *relevant* memories (gated by overlap) as
+labelled `memory/<turn>` evidence in the same grounded channel as the corpus — so a personal fact is
+used by the model yet still verified by grounding (never invented), and personalization works at $0.
+`memory.write` then learns durable facts from the turn via a `MemoryExtractor`, on every exit path
+including abstain (ADR-0026):
 
 ```mermaid
 flowchart LR

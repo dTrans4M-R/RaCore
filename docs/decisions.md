@@ -517,3 +517,62 @@ chunk → retrieval → `stalest_age`); then keep one file, edit one, remove one
 `added=2, unchanged=1, deleted=2`, and a search confirms the index matches the folder exactly — the removed
 file and the pre-edit text are gone. **Phase 3 (Freshness) DoD is now fully met: incremental re-index
 works, staleness is surfaced, and a live connector drives both.**
+
+### ADR-0026 — Memory write policy as a port; memory injected as labelled grounded evidence (Phase 4, slice 1)
+
+**Context.** Phase 4 DoD: "per-user personalization; fact-recall + personalization-lift measured." The
+`MemoryStore` port and `FileMemoryStore` substrate existed from Phase 0, but the two pipeline seams were
+inert stubs — `_understand` ignored the memories it was handed, and `_learn` returned `[]`, so nothing was
+ever remembered or used. The hard parts (`docs/memory.md` §3) had to be built: *what is worth remembering*
+(write policy), and *how a remembered fact reaches the answer* — under two house constraints. First, the
+$0 stack must demonstrate the value (every component earns its place at $0; paid only improves), yet the
+default generator is the **extractive** `ExtractiveLLM`, which can only quote evidence — it can't read a
+"system context" section. Second, memory must stay **grounded** (`docs/memory.md` §6: never let the model
+invent a memory) and **isolated** per `(tenant, user)`.
+
+**Decision.** Three choices.
+
+1. **The write policy is a port, not a hardcoded rule.** *What to remember* is a judgement, and we already
+   know the second concrete case (an LLM extractor), so — exactly as Phase 2 introduced `RelevanceGate` with
+   a $0 floor plus an LLM drop-in — add a `MemoryExtractor` port now. The $0 `RuleBasedMemoryExtractor`
+   recognises **explicit** self-statements (a stated preference, `my <slot> is <value>`, an occupation, an
+   explicit `remember that …`) and proposes one `MemoryItem` each, with a content-hash ID (idempotent
+   re-statement), a salience weight gated by a floor (the write policy — weak signals are dropped, not
+   stored as noise), and the turn as provenance. It favours **precision over recall** and infers nothing;
+   that missing recall (implicit/paraphrased facts, episodic summaries) is precisely what a paid LLM
+   extractor adds behind the same port — the "paid only improves" lever. So personalization is bought at
+   $0, and spend only *widens* what is remembered, never *enables* it.
+
+2. **Memory reaches the answer as labelled grounded evidence, not a separate prompt channel.** A relevant
+   memory is wrapped in a `Retrieval` over a synthetic chunk sourced `memory/<turn>` and prepended to the
+   reranked corpus evidence. This is the one design that satisfies both constraints at once: the $0
+   extractive model *can* use it (it's just evidence it can quote), and grounding *still verifies* it (a
+   remembered claim must be entailed by the injected memory text — never invented). Injection is
+   **relevance-gated** by token overlap, so a memory unrelated to the current query is never injected and
+   can't hijack a corpus answer; when a memory *is* relevant it leads (score `1 + salience`), because a
+   personal question is answered from what we know about the user. Because injection happens *before* the
+   "no usable context" check, a purely personal question is answerable even when corpus retrieval finds
+   nothing. The `memory/` source label keeps it distinct from corpus evidence (`docs/memory.md` §5).
+
+3. **Learn on every exit path, with no clock.** `_remember` runs before *every* return — including both
+   abstain paths — so a user stating a fact is remembered whether or not the turn produced an answer. The
+   extractor takes no wall-clock time (consistent with ADR-0024): timestamps and recency ranking are
+   deferred to slice 2, so this slice stays deterministic. `MemoryItem` gains a `key` slot (the conflict
+   field a newer same-slot fact will supersede on) and a `MemoryTurn` input type; neither is part of the
+   content-hash ID.
+
+**Measured (`tests/test_memory_extract.py`, `tests/test_memory_pipeline.py`; $0, no API).** The extractor
+turns explicit statements into the right kind/content/key/provenance and extracts **nothing** from an
+ordinary question (asking never pollutes memory). End to end on the **$0 stack**, a probe answerable only
+from a stated preference shows the personalization lift: with memory **off** (a different user) the answer
+cannot say "bullet"; with memory **on** it answers "bullet", cited to a `memory/` source — and an
+*unrelated* memory leaves a corpus answer (and its corpus citation) untouched. The standard corpus-only
+eval (no `user_id`) is **byte-identical** to the Phase 3 baseline (recall 0.940, faithfulness 1.000,
+answer 0.857, refusal 0.824) — the personalization path adds capability without touching the corpus path.
+Gate green: **102 passed**.
+
+**Deferred (slices 2–3).** Conflict resolution (a newer fact superseding the older on its `key`, keeping
+the old one's provenance) and recency-relevance-salience memory ranking (slice 2); a first-class harness
+personalization-lift metric + `--memory` CLI and the opt-in paid LLM extractor, plus compaction/TTL
+(slice 3). This slice builds the loop and proves the lift; the next two make conflict, ranking, and the
+headline number first-class.

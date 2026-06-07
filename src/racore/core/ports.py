@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         LLMRequest,
         LLMResponse,
         MemoryItem,
+        MemoryTurn,
         RelevanceCheck,
         Retrieval,
         TokenUsage,
@@ -103,6 +104,18 @@ class MemoryStore(Protocol):
     async def read(self, tenant_id: str, user_id: str, query: str, k: int) -> list[MemoryItem]: ...
 
     async def write(self, tenant_id: str, user_id: str, items: list[MemoryItem]) -> None: ...
+
+
+class MemoryExtractor(Protocol):
+    """Propose durable per-user memories from a conversational turn — the *write policy*.
+
+    What is worth remembering is a judgement (``docs/memory.md`` §3), so it is a port, not a
+    hardcoded rule: the $0 ``RuleBasedMemoryExtractor`` is the floor (explicit self-statements),
+    and a salience-judging, implicit-fact-aware LLM extractor drops in behind the same port as the
+    "paid only improves" lever. Batch-first and async (ADR-0009). Each returned ``MemoryItem``
+    carries its provenance ``source`` so a remembered fact is grounded, never invented."""
+
+    async def extract(self, turns: list[MemoryTurn]) -> list[MemoryItem]: ...
 
 
 class LLMProvider(Protocol):
