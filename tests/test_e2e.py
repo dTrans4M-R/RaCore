@@ -125,6 +125,9 @@ def test_report_carries_per_case_detail() -> None:
     verbose = report.render(verbose=True)
     assert "Per-case" in verbose
     assert "[q1]" in verbose
+    assert (
+        "top=" in verbose
+    )  # the top retrieval score is shown so threshold bands can be calibrated
     assert "Per-case" not in report.render(verbose=False)
 
     # The detail is machine-readable too (for JSON dumps / regression diffs).

@@ -56,6 +56,7 @@ class CaseOutcome:
     faithfulness: float
     citation_correctness: float
     retrieval_recall: float
+    top_score: float
     relevant_sources: tuple[str, ...]
     retrieved_sources: tuple[str, ...]
     unsupported_claims: tuple[str, ...]
@@ -105,6 +106,7 @@ class HarnessReport:
                     "faithfulness": c.faithfulness,
                     "citation_correctness": c.citation_correctness,
                     "retrieval_recall": c.retrieval_recall,
+                    "top_score": c.top_score,
                     "relevant_sources": list(c.relevant_sources),
                     "retrieved_sources": list(c.retrieved_sources),
                     "unsupported_claims": list(c.unsupported_claims),
@@ -217,6 +219,7 @@ def _case_outcome(case: EvalCase) -> CaseOutcome:
         faithfulness=answer.grounding.faithfulness,
         citation_correctness=answer.grounding.citation_correctness,
         retrieval_recall=recall_at_k(case),
+        top_score=answer.retrievals[0].score if answer.retrievals else 0.0,
         relevant_sources=row.relevant_sources,
         retrieved_sources=tuple(r.chunk.source for r in answer.retrievals),
         unsupported_claims=answer.grounding.unsupported_claims,
@@ -229,6 +232,7 @@ def _render_case(case: CaseOutcome) -> str:
     head = (
         f"  [{case.id}] {mark} recall={case.retrieval_recall:.2f} faith={case.faithfulness:.2f}"
         f" cite={case.citation_correctness:.2f} abstain={'Y' if case.abstained else 'n'}"
+        f" top={case.top_score:.3f}"
         f"  {case.question}"
     )
     body = [f"        A: {_truncate(case.answer, 140)}"]

@@ -384,3 +384,20 @@ the lexical gate, ADR-0021). (Fixed in passing: `_resolve_api_key` now resolves 
 `OPENAI_API_KEY` env > local placeholder — the placeholder had shadowed a real key and 401'd the hosted
 path.) The in-process cross-encoder gate remains deferred (heaviest dependency; Finding D shows no
 measurable retrieval gap yet).
+
+**Voyage-embedder follow-up (2026-06-07, `qwen2.5:7b` gate) — clean evidence lifts the local gate but it
+plateaus *below* the frontier: the wall is the model, not the embedder.** The pre-registered test was "does
+a semantic embedder flip qwen's three false refusals (q4/q6/p1)?" Swapping the lexical mock for Voyage
+(retrieval **0.940 → 1.000** recall, nDCG **→ 0.988**, MRR **→ 1.000**) lifted the local 7B to **refusal
+0.882 / answer 0.857** (from 0.824 / 0.643) and, with the right doc now at rank-1, erased *both* Finding-A
+wrong answers (p2 asteroid-belt → Mars, p5 Ganymede → Europa). But it closed only **one** of the three
+false refusals: **q4 flipped** to ANSWER once the evidence was clean, while **q6 and p1 still refused on
+perfect rank-1 evidence** — q6 against a passage that *verbatim* states "Titan is the largest moon of
+Saturn," p1 needing only the synonym map world→planet / star→Sun. Those two are a **7B judgment ceiling**,
+not an evidence problem, so no embedder fixes them; the gate plateaus at **0.882 vs the hosted gate's
+1.000**. The product reading is sharpened, not changed: `$0` buys safety and *most* helpfulness, and the
+frontier premium is now isolated to exactly the calibration/paraphrase rows a mid-size model can't judge.
+The remaining open issue is **latency** (~7 s/query), not quality — to be addressed by the cascade (free
+score bands carry the confident cases; the slow LLM runs only the gray zone). To make those bands
+tunable, the harness `-v` output now prints the per-case **top retrieval score** (`top=`): a threshold
+can't be calibrated blind.
