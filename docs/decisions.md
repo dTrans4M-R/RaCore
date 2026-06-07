@@ -347,5 +347,17 @@ shape, verdict parse, empty-retrieval skip, cascade composition + usage forwardi
 real `AsyncOpenAI` 2.41 constructor (the contract test, offline — it builds the client, makes no request);
 mypy `--strict` passes with and without the extra. Live validation against a running local model is the
 operator's manual step (`--gate llm --gate-provider openai`), the same opt-in pattern as the paid gate —
-no server runs in CI. The in-process cross-encoder gate remains deferred (heaviest dependency; Finding D
-shows no measurable retrieval gap yet).
+no server runs in CI.
+
+**Live local run (2026-06-07, Ollama `llama3.2` 3B, mock stack) — the gate's quality is model-bound.**
+The adapter works end-to-end and cost is honestly `n/a`/`$0`, but the 3B model **over-abstained**:
+refusal accuracy **0.647** (six false refusals on answerable rows where the right doc *was* retrieved)
+vs the Claude gate's **1.000**, dragging answer correctness to 0.429 — both *below* the no-gate baseline
+(0.824 / 0.857), at ~4 s/query. The failure is a weak model told to judge strictly refusing the noisy
+evidence a *lexical* embedder retrieves; the protective direction held (all three negative controls
+caught, false-answer rate 0.0 — it over-refuses, never fabricates). So the local gate is only as good as
+its model: the path to a usable local gate is a **stronger model (7-8B)** and/or a **semantic embedder**
+(cleaner evidence, fewer gray-zone calls via the cascade), not an adapter change. This mirrors the
+project's pattern — the cheap component has a measured blind spot, surfaced by the eval harness, not
+hidden (cf. the lexical judge, ADR-0017; the lexical gate, ADR-0021). The in-process cross-encoder gate
+remains deferred (heaviest dependency; Finding D shows no measurable retrieval gap yet).

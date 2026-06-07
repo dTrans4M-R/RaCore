@@ -231,15 +231,23 @@ free-answer band is opt-in and must be calibrated, never trading away the absten
 
 The same port runs a **local** model at **$0 per call**: `OpenAIRelevanceGate` speaks the
 chat-completions protocol every local runtime (Ollama, vLLM, LM Studio) exposes, so the
-embedder-independent gate needs no key and no per-token spend when self-hosted (ADR-0022):
+embedder-independent gate needs no key and no per-token spend when self-hosted (ADR-0022).
+**Prerequisite:** install [Ollama](https://ollama.com), let it start its local server (`:11434`), and
+pull a model — then point the gate at it:
 
 ```bash
-ollama pull llama3.2   # any small instruct model answers the one-word ANSWER/ABSTAIN
-uv run --extra openai python -m racore.eval --gate llm --gate-provider openai --model llama3.2 -v
+ollama pull qwen2.5:7b   # a 7-8B instruct model makes a solid gate (see the note below)
+uv run --extra openai python -m racore.eval --gate llm --gate-provider openai --model qwen2.5:7b -v
 ```
 
-The *same* adapter targets the hosted OpenAI API with `--gate-base-url https://api.openai.com/v1` and a
-key — "paid ↔ local" is a one-flag change behind the port, never a fork.
+Gate **quality scales with the local model**, and it's worth knowing before you wire one in: in a live
+run a 3B model (`llama3.2`) *over-abstained* on the lexical mock stack — **refusal accuracy 0.65 vs the
+Claude gate's 1.00**, six false refusals on answerable questions — because a weak model told to judge
+strictly refuses the noisy evidence a lexical embedder retrieves (it never *fabricated*: all three
+negative controls were still caught). Prefer a 7-8B model, and/or run the gate on a semantic embedder
+(cleaner evidence); local inference also adds real latency (seconds/query on CPU). The *same* adapter
+targets the hosted OpenAI API with `--gate-base-url https://api.openai.com/v1` and a key — "paid ↔
+local" is a one-flag change behind the port, never a fork.
 
 ## License
 
