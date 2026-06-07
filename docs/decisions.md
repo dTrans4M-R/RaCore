@@ -349,15 +349,38 @@ mypy `--strict` passes with and without the extra. Live validation against a run
 operator's manual step (`--gate llm --gate-provider openai`), the same opt-in pattern as the paid gate —
 no server runs in CI.
 
-**Live local run (2026-06-07, Ollama `llama3.2` 3B, mock stack) — the gate's quality is model-bound.**
-The adapter works end-to-end and cost is honestly `n/a`/`$0`, but the 3B model **over-abstained**:
-refusal accuracy **0.647** (six false refusals on answerable rows where the right doc *was* retrieved)
-vs the Claude gate's **1.000**, dragging answer correctness to 0.429 — both *below* the no-gate baseline
-(0.824 / 0.857), at ~4 s/query. The failure is a weak model told to judge strictly refusing the noisy
-evidence a *lexical* embedder retrieves; the protective direction held (all three negative controls
-caught, false-answer rate 0.0 — it over-refuses, never fabricates). So the local gate is only as good as
-its model: the path to a usable local gate is a **stronger model (7-8B)** and/or a **semantic embedder**
-(cleaner evidence, fewer gray-zone calls via the cascade), not an adapter change. This mirrors the
-project's pattern — the cheap component has a measured blind spot, surfaced by the eval harness, not
-hidden (cf. the lexical judge, ADR-0017; the lexical gate, ADR-0021). The in-process cross-encoder gate
-remains deferred (heaviest dependency; Finding D shows no measurable retrieval gap yet).
+**Live local-vs-hosted runs (2026-06-07, mock stack) — $0 buys the gate's *safety*; its *helpfulness
+and speed* scale with the model.** Four gates over the same lexical `$0` stack:
+
+| gate | refusal.acc | answer.corr | fabrication-on-no-evidence | false refusals | gate latency |
+|---|---|---|---|---|---|
+| none (baseline) | 0.824 | 0.857 | **3 / 3 negatives** | 0 | 0 ms |
+| Ollama `llama3.2` (3B) | 0.647 | 0.429 | **0** | 6 | ~4 s |
+| Ollama `qwen2.5:7b` | 0.824 | 0.643 | **0** | 3 | **~10 s** |
+| `gpt-4o-mini` / Claude (hosted) | **1.000** | 0.857 | **0** | **0** | ~1 s |
+
+The decisive column is **fabrication-on-no-evidence: every gate, local or hosted, drives it 3/3 → 0** —
+the cardinal grounding property is bought at `$0` by even a 3B model. What scales with model strength is
+the *secondary* axis: false refusals fall **6 → 3 → 0** (qwen's three holdouts `q4`/`q6`/`p1` are
+paraphrase / noisy-evidence cases a mid-size model won't dig the answer out of), and only a frontier
+model reaches the no-false-refusal ideal. Two measurement nuances the numbers force into the open:
+(1) `refusal.accuracy` weights a false refusal and a fabrication **equally, but the product does not** —
+so qwen's `0.824` (all negatives caught, three *safe* over-refusals) is *qualitatively better* than the
+baseline's identical `0.824` (three *fabrications*); the symmetric metric understates the gate's value,
+and an asymmetric refusal score is a future eval refinement. (2) the 7B gate ran at **~10 s/query** on
+commodity CPU — safe but too slow for an interactive bot, the project's stated latency concern. The two
+`BAD` answer rows (`p2`/`p5`) are **identical across qwen and the hosted gates** because they are
+Finding A (the mock generator quoting a rank-1 distractor), *not* a gate error — so the hosted gate is a
+**perfect** gate here and the `0.857` ceiling is the mock generator, which Voyage already lifts by
+putting the right doc at rank-1.
+
+**Conclusion — aligned with the product goal.** `$0` already buys *safety*; paid only *improves*
+helpfulness and latency, which is precisely "the `$0` stack is best-positioned so paid only improves,"
+not "paid is required for correctness." The path to a usable **fully-`$0`** gate is a **semantic
+embedder** (clean evidence should flip the local 7B's three holdouts) run through the **cascade**
+(gray-zone-only calls bound the ~10 s cost) — the next experiment. This mirrors the project's pattern: a
+cheap component's blind spot surfaced by the eval harness, not hidden (cf. the lexical judge, ADR-0017;
+the lexical gate, ADR-0021). (Fixed in passing: `_resolve_api_key` now resolves explicit key >
+`OPENAI_API_KEY` env > local placeholder — the placeholder had shadowed a real key and 401'd the hosted
+path.) The in-process cross-encoder gate remains deferred (heaviest dependency; Finding D shows no
+measurable retrieval gap yet).
