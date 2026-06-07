@@ -35,14 +35,14 @@ flowchart TB
         LL["llm providers"]:::a
     end
     EV["eval/ — harness + metrics"]
-    API["api/ — HTTP service + in-process SDK"]
-    WEB["demo-web/ — Next.js showcase"]
+    SVC["service/ — facade + ASGI/SSE + cache + observability"]
+    WEB["demo-web/ — Next.js showcase (planned)"]
 
     PL --> P
     P -.implemented by.-> adapters
     EV -.measures.-> PL
-    API --> PL
-    WEB --> API
+    SVC --> PL
+    WEB --> SVC
     classDef a fill:#eef,stroke:#88a;
 ```
 
@@ -69,6 +69,7 @@ flowchart TB
 | `LLMProvider` | grounded generation (streaming) | anthropic · openai |
 | `EntailmentJudge` | per-claim: does cited evidence support it? | substring · token-overlap · llm-judge |
 | `RelevanceGate` | answer-vs-abstain on the retrieved evidence (proactive refusal) | threshold · anthropic · openai (local/hosted) · cascade |
+| `AnswerCache` | serve a repeat answer if its grounding is still intact (latency, gated by content-hash) | grounding-gated (in-memory) · redis/edge |
 | `Evaluator` | score a run against a dataset | retrieval · grounding · answer |
 
 ## 5. The two pipelines (`core/pipeline.py`)
@@ -103,34 +104,47 @@ flowchart LR
     G -.evidence too weak<br/>(short-circuit generate).-> X
 ```
 
-## 6. How applications connect
+## 6. How applications connect (the productizing layer, `service/`)
 
-One core, exposed two ways:
+One core, one facade, many transports (Phase 5 — [`productizing.md`](productizing.md), ADR-0031).
+`RaCoreService` (`service/core.py`) is a transport-agnostic object over the async pipeline: it maps a
+wire request onto the core objects, drives `Pipeline`, and returns the rich core result. It adds **no**
+engine logic — only product-surface concern. Two ways to reach it:
 
-- **In-process SDK** (`api/sdk.py`) — a Python object; lowest latency. **This is how Lorinks (or any
-  Python app) embeds the engine.**
-- **HTTP / gRPC service** (`api/service.py`) — `POST /ingest`, `POST /answer` (SSE streaming),
-  `GET/POST /memory`. For non-Python apps or process isolation.
+- **In-process import** — `RaCoreService` (or the raw `Pipeline`) as a Python object; lowest latency.
+  How any Python app embeds the engine.
+- **HTTP service** (`service/asgi.py`) — a **dependency-free ASGI app**: `GET /health`, `POST /ingest`,
+  `POST /answer` (SSE streaming), `GET/POST /memory`. No web framework; any ASGI server runs it. For
+  non-Python apps or process isolation.
+
+Cross-cutting product concerns live at this layer, not in the core: **grounding-gated caching**
+(`AnswerCache`, the latency lever, ADR-0032) and **per-request observability** (a `ServiceEvent` per
+call to a pluggable `Observer`, ADR-0033).
 
 **Multi-tenancy:** a `tenant_id` at the boundary namespaces the vector store and the memory store, so
 one deployment serves many clients without co-mingling data. Per-user memory is keyed `(tenant, user)`.
+The facade enforces this boundary and fails closed; the service tests prove isolation through the HTTP
+round-trip.
 
 ## 7. Folder layout
 
 ```
-src/grounded_rag/
-  core/      types.py · ports.py · pipeline.py · grounding.py
-  adapters/  embeddings/ vectorstores/ rerankers/ chunkers/ sources/ memory/ llm/
-  config/    schema.py            # pydantic — the customization surface
-  eval/      harness.py · metrics.py · datasets/
-  api/       service.py · sdk.py
-tests/
-demo-web/    # Next.js: chat + click-to-source citations + memory panel
-examples/contracts/   # flagship demo config + seed filings
+src/racore/
+  core/      types.py · ports.py · pipeline.py · grounding.py · freshness.py · ids.py
+  adapters/  embeddings · vectorstores · rerankers · chunkers · sources · memory ·
+             memory_extract · judges · relevance · llm · cache       # one module per port family
+  eval/      harness.py · metrics.py · datasets.py · pricing.py · memory.py · __main__.py
+  service/   core.py (facade) · asgi.py (HTTP/SSE) · observability.py · types.py
+tests/       one module per behaviour, mirroring the package
+config/      pydantic schema — the typed customization surface (planned)
+demo-web/    Next.js: chat + click-to-source citations + memory panel (planned)
 ```
 
 ## 8. Tech choices (see [`decisions.md`](decisions.md) for the why)
 
-Python 3.12 core · pydantic config · FastAPI service · **pgvector** (prod) / **in-memory** (dev) ·
-a **local embedding model** as the default so the public demo costs **$0** (Voyage/OpenAI are drop-in
-upgrades) · Next.js + TypeScript for `demo-web/`.
+Python 3.12 core, **zero runtime dependencies** · frozen-dataclass domain + wire types (a pydantic
+config schema is the planned typed surface) · a **dependency-free ASGI** HTTP app — no web framework,
+runs under any ASGI server (ADR-0031) · **in-memory** vector store / cache (dev), with pgvector and a
+shared/edge cache as the production adapters · a **local/mock embedding model** as the default so the
+public demo costs **$0** (Voyage/OpenAI/local are drop-in upgrades) · Next.js + TypeScript for
+`demo-web/` (planned).

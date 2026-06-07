@@ -45,7 +45,8 @@ here, never in a consumer repo. See [`CLAUDE.md`](CLAUDE.md) for the house rules
 ## Status
 
 **Phase 0 — Foundation: the walking skeleton is live**, **Phase 1 — Grounding is in**, **Phase 2 —
-Relevance & refusal is in**, **Phase 3 — Freshness is in**, and **Phase 4 — Memory is in.** A thin end-to-end slice runs through the real ports at **$0**
+Relevance & refusal is in**, **Phase 3 — Freshness is in**, **Phase 4 — Memory is in**, and **Phase 5
+— Productizing is underway.** A thin end-to-end slice runs through the real ports at **$0**
 external spend — ingest → retrieve → rerank → ground → cite → answer — with per-stage timing
 (ADR-0010) and content-hash IDs (ADR-0011), plus an eval harness that prints a baseline over a golden
 set.
@@ -106,6 +107,22 @@ recovers the implicit facts to **recall 1.000 / lift +1.000**, without regressin
 that, **Phase 4's definition of done is met**: per-user personalization works and fact-recall + lift are
 measured (see [`docs/memory.md`](docs/memory.md)).
 
+**Phase 5 — Productizing** turns the proven engine into a deployable service **without touching
+`core/`** — the payoff of the day-one discipline ([`docs/productizing.md`](docs/productizing.md)). A
+transport-agnostic `RaCoreService` facade drives the pipeline; over it sits a **dependency-free ASGI
+app** (no web framework — any ASGI server runs it, ADR-0031) exposing `POST /ingest`, `POST /answer`
+(**SSE** — tokens stream for a fast first paint, then one `done` event carries the citations +
+grounding), and `GET/POST /memory`. **Multi-tenancy** is enforced and proven *through the HTTP
+round-trip*: a query in one tenant can never reach another's corpus, nor one user another's memory.
+Caching is the latency lever, made safe by gating on grounding rather than similarity (ADR-0032): a
+`GroundingGatedCache` stores each answer with the chunk IDs it was grounded on and — because IDs are
+content hashes — **auto-invalidates** the instant that evidence is edited or removed, while an
+unrelated ingest leaves it valid; a hit skips the dominant `generate` stage, and personalized answers
+bypass the shared cache. Finally, **per-request observability** falls out of the per-stage trace for
+free (ADR-0033): one structured `ServiceEvent` per call to a pluggable `Observer` (a $0 stdlib JSON
+sink by default) surfaces cache hit-rate, latency, tokens, abstain rate, and grounding per tenant. All
+$0 and offline-tested.
+
 Build order and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
@@ -115,6 +132,7 @@ Build order and per-phase "definition of done" are in [`docs/roadmap.md`](docs/r
 - [`docs/latency.md`](docs/latency.md) — latency & streaming: replying promptly without awkward pauses.
 - [`docs/freshness.md`](docs/freshness.md) — keeping the index current (incremental re-index, staleness, connectors).
 - [`docs/memory.md`](docs/memory.md) — the per-user persistent memory subsystem.
+- [`docs/productizing.md`](docs/productizing.md) — the service surface: facade, ASGI/SSE, multi-tenancy, grounding-gated caching, observability, the open-core line.
 - [`docs/roadmap.md`](docs/roadmap.md) — the phased build plan and per-phase definition of done.
 - [`docs/decisions.md`](docs/decisions.md) — the architecture decision log (why each choice was made).
 
@@ -158,6 +176,32 @@ asyncio.run(main())
 Swap any adapter (embeddings, vector store, reranker, LLM, …) for a real provider without touching
 the core — that boundary is the ports-and-adapters design in
 [`docs/architecture.md`](docs/architecture.md).
+
+### Run it as a service (HTTP, $0, zero dependencies)
+
+The same engine behind a transport-agnostic facade and a **dependency-free ASGI app** — no web
+framework, so any ASGI server runs it (Phase 5, [`docs/productizing.md`](docs/productizing.md)):
+
+```python
+from pathlib import Path
+
+from racore.service import create_app, demo_service
+
+# The $0 stack wired with per-user memory + the grounding-gated cache.
+app = create_app(demo_service(Path("./.racore-memory")))
+# then:  uvicorn module:app   (uvicorn is a deploy choice, never a package dependency)
+```
+
+```bash
+curl -s localhost:8000/ingest -d '{"tenant_id":"acme","documents":[{"source":"sky","text":"Mercury is closest to the Sun."}]}'
+curl -sN localhost:8000/answer -d '{"text":"What is closest to the Sun?","tenant_id":"acme"}'
+#   → SSE: `token` events stream the text, then one `done` event carries citations + grounding.
+```
+
+Every call is tenant-scoped, repeat asks are served from the grounding-gated cache, and each request
+emits a structured observability event. No socket is needed to *test* it: the suite drives the ASGI
+app through the raw protocol with fake `receive`/`send`. The facade also has an `answer`/`ingest`/
+`read_memory`/`write_memory` Python API for embedding the service in-process.
 
 ### Stress-testing grounding with a real model (opt-in)
 
