@@ -611,3 +611,39 @@ current value per slot while retaining the old one on disk with its `superseded_
 provenance; distinct slots and keyless preferences coexist without false collisions; `read` breaks an
 equal-relevance tie by salience. End to end through the pipeline, a user correcting their name is answered
 "Bob" and never "Ada" — extractor `key` + store supersede + injection composing. Gate green: **106 passed**.
+
+### ADR-0028 — Personalization-lift eval, and "no extraction from a question" (Phase 4, slice 3a)
+
+**Context.** Phase 4 DoD: "fact-recall + personalization-lift **measured**." The corpus harness runs one
+pipeline over a flat golden set with **no `user_id`**, so it structurally cannot measure personalization,
+which is per-user and cross-turn (state a fact on one turn, rely on it the next). Slices 1–2 built and
+unit-proved the loop; the headline number needed a first-class harness. Building it surfaced a precision
+gap in the slice-1 extractor: a probe like "What field do I work in?" matched the occupation rule, so
+merely *asking* could write (and, via slot conflict, corrupt) a memory.
+
+**Decision.** Two changes.
+
+1. **A dedicated memory eval (`eval/memory.py`), separate from the corpus path.** A `MemoryScenario` is a
+   user's `setup` statements plus a `question` only those facts can answer. `run_memory_lift` answers each
+   probe twice — as the **stating user** (memory on) and as a reserved user who never stated anything
+   (memory off; per-user isolation keeps it empty) — and reports `lift = correctness_on − correctness_off`,
+   plus a stored-fact-recall rate (did the on-answer actually cite a `memory/` source?). It is a separate
+   harness, not an `Evaluator`, because the unit of measurement is an **on/off pair across turns**, not a
+   per-row score over a single run. CLI: `python -m racore.eval --memory [-v]` over a throwaway store; the
+   default corpus baseline is untouched.
+
+2. **The extractor ignores questions.** A sentence ending in `?` is asking, not stating, so it yields no
+   memory — and each rule now requires a non-empty captured value. This keeps precision high and, crucially,
+   stops a probe (or any question) from polluting memory. It is the right rule regardless of the eval:
+   questions are not self-statements.
+
+**Measured (`tests/test_memory_eval.py`, `tests/test_memory_extract.py`; $0, no API).** On the $0 stack
+across 5 scenarios (name, preference, fiscal-year, occupation, a "remember that" flight fact): **lift
++1.000** (correctness on **1.000** / off **0.000**), **stored-fact recall 1.000** — every on-answer is
+grounded in a `memory/` citation, every off-answer falls back to an irrelevant corpus doc. Asking "What
+field do I work in?" now extracts nothing. Gate green: **107 passed**.
+
+**Deferred (slice 3b).** Recency-aware ranking with an injected `now` over a *dated* memory corpus (the
+piece held back from slice 2 so it ships with a number), the opt-in **LLM extractor** as the
+"paid only improves" lever (it lifts *recall* of implicit/paraphrased facts the rule floor misses, on the
+same scenarios), and compaction/TTL. This slice fixes the number the lift is measured by; 3b moves it.

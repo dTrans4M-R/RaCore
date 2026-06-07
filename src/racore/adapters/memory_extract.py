@@ -65,6 +65,11 @@ class RuleBasedMemoryExtractor:
 
 def _from_sentence(sentence: str, turn: MemoryTurn) -> MemoryItem | None:
     """One candidate memory from one sentence, or ``None`` if it states nothing durable."""
+    # A question is asking, not stating — "What field do I work in?" must never be mistaken for a
+    # self-statement. Filtering it keeps precision high (and stops a probe from polluting memory).
+    if sentence.rstrip().endswith("?"):
+        return None
+
     boost = 0.0
     wrapped = _REMEMBER_RE.match(sentence)
     if wrapped is not None:
@@ -84,25 +89,34 @@ def _from_sentence(sentence: str, turn: MemoryTurn) -> MemoryItem | None:
 
 
 def _match_rules(text: str) -> tuple[MemoryKind, str, str, float] | None:
-    """Return ``(kind, content, key, salience)`` for the first rule that matches ``text``."""
+    """Return ``(kind, content, key, salience)`` for the first rule that matches ``text``.
+
+    Each rule requires a non-empty captured value, so a fragment like "I work in" (no object) does
+    not produce a hollow memory."""
     name = _NAME_RE.search(text)
-    if name is not None:
-        return MemoryKind.PROFILE, f"name is {_clean(name.group('value'))}", "name", 0.9
+    if name is not None and (value := _clean(name.group("value"))):
+        return MemoryKind.PROFILE, f"name is {value}", "name", 0.9
 
     fact = _MY_FACT_RE.search(text)
-    if fact is not None:
-        slot = _clean(fact.group("slot"))
-        content = f"{slot} {fact.group('verb').lower()} {_clean(fact.group('rest'))}"
-        return MemoryKind.SEMANTIC, content, slot.lower(), 0.85
+    if (
+        fact is not None
+        and (slot := _clean(fact.group("slot")))
+        and (rest := _clean(fact.group("rest")))
+    ):
+        return (
+            MemoryKind.SEMANTIC,
+            f"{slot} {fact.group('verb').lower()} {rest}",
+            slot.lower(),
+            0.85,
+        )
 
     work = _WORK_RE.search(text)
-    if work is not None:
-        content = f"works {work.group('prep').lower()} {_clean(work.group('value'))}"
-        return MemoryKind.PROFILE, content, "work", 0.8
+    if work is not None and (value := _clean(work.group("value"))):
+        return MemoryKind.PROFILE, f"works {work.group('prep').lower()} {value}", "work", 0.8
 
     pref = _PREFERENCE_RE.search(text)
-    if pref is not None:
-        return MemoryKind.PROFILE, f"prefers {_clean(pref.group('value'))}", "", 0.8
+    if pref is not None and (value := _clean(pref.group("value"))):
+        return MemoryKind.PROFILE, f"prefers {value}", "", 0.8
     return None
 
 

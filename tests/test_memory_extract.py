@@ -59,9 +59,12 @@ def test_remember_wrapper_keeps_an_unrecognised_fact_verbatim() -> None:
 
 
 def test_a_question_extracts_nothing() -> None:
-    # Asking about something must never be mistaken for stating a fact about oneself.
+    # Asking about something must never be mistaken for stating a fact about oneself — even when the
+    # question contains a self-statement pattern ("do I work in ...").
     assert _extract("What is the largest planet?") == []
     assert _extract("Do you prefer tea or coffee?") == []
+    assert _extract("Do I work in finance?") == []
+    assert _extract("What field do I work in?") == []
 
 
 def test_multiple_sentences_yield_multiple_memories() -> None:

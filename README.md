@@ -45,7 +45,7 @@ here, never in a consumer repo. See [`CLAUDE.md`](CLAUDE.md) for the house rules
 ## Status
 
 **Phase 0 — Foundation: the walking skeleton is live**, **Phase 1 — Grounding is in**, **Phase 2 —
-Relevance & refusal is in**, and **Phase 3 — Freshness is in.** A thin end-to-end slice runs through the real ports at **$0**
+Relevance & refusal is in**, **Phase 3 — Freshness is in**, and **Phase 4 — Memory is in.** A thin end-to-end slice runs through the real ports at **$0**
 external spend — ingest → retrieve → rerank → ground → cite → answer — with per-stage timing
 (ADR-0010) and content-hash IDs (ADR-0011), plus an eval harness that prints a baseline over a golden
 set.
@@ -88,6 +88,20 @@ explicit `now` (never the wall clock, so eval stays deterministic). And a first 
 (so re-ingest is incremental) and every file's modified time becomes its real freshness timestamp — $0,
 stdlib, offline-testable. With that, **Phase 3's definition of done is met**: incremental re-index works,
 staleness is surfaced, and a live connector drives them (see [`docs/freshness.md`](docs/freshness.md)).
+
+**Phase 4 — Memory** makes the engine personalize per user. The two seams that were inert in Phase 0 are
+now a working **write → read loop** (ADR-0026): a pluggable `MemoryExtractor` port turns a turn's explicit
+self-statements into durable memories (a `$0` rule-based floor; an LLM extractor is the paid drop-in that
+only *widens* recall), and a user's *relevant* memories are injected into the answer as labelled,
+overlap-gated `memory/` evidence — the **same grounded channel as the corpus**, so the extractive `$0`
+model can use them yet grounding still verifies them (a remembered fact is never invented). New facts in a
+known slot **supersede** the old rather than contradicting it, keeping provenance for audit (ADR-0027). The
+headline is measured first-class (`--memory`, ADR-0028): on the `$0` stack, questions answerable only from
+a stated fact go from unanswerable to correct — **personalization lift +1.000**, stored-fact recall 1.000 —
+while the corpus baseline is byte-identical (memory is off without a `user_id`). With that, **Phase 4's
+definition of done is met**: per-user personalization works and fact-recall + lift are measured (see
+[`docs/memory.md`](docs/memory.md)).
+
 Build order and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs

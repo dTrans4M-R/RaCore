@@ -152,6 +152,19 @@ async def _run(
     return await run(pipeline, golden_dataset(), default_evaluators())
 
 
+def _run_memory(*, verbose: bool) -> None:
+    """Run the memory personalization-lift eval over a throwaway file-backed store."""
+    import tempfile
+    from pathlib import Path
+
+    from racore.eval.memory import memory_demo_pipeline, run_memory_lift
+
+    with tempfile.TemporaryDirectory() as base_dir:
+        report = asyncio.run(run_memory_lift(memory_demo_pipeline(Path(base_dir))))
+    print("# memory personalization lift  (embedder=mock  llm=mock  extractor=rule-based)")
+    print(report.render(verbose=verbose))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m racore.eval",
@@ -230,12 +243,22 @@ def main() -> None:
         "http://localhost:11434/v1). Point at vLLM/LM Studio or https://api.openai.com/v1.",
     )
     parser.add_argument(
+        "--memory",
+        action="store_true",
+        help="run the per-user memory personalization-lift eval ($0) instead of the corpus "
+        "baseline: correctness with memory on vs off, on questions only a stated fact can answer.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
         help="print per-case detail (question, answer, the claims that were unsupported).",
     )
     args = parser.parse_args()
+
+    if args.memory:
+        _run_memory(verbose=args.verbose)
+        return
 
     report = asyncio.run(
         _run(
