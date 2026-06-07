@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from racore.service.asgi import ASGIApplication, create_app
 from racore.service.core import RaCoreService, ServiceError, demo_service
+from racore.service.observability import LoggingObserver, Observer, ServiceEvent
 from racore.service.types import (
     AnswerRequest,
     DocumentInput,
@@ -24,10 +25,13 @@ __all__ = [
     "AnswerRequest",
     "DocumentInput",
     "IngestRequest",
+    "LoggingObserver",
     "MemoryReadRequest",
     "MemoryWriteRequest",
+    "Observer",
     "RaCoreService",
     "ServiceError",
+    "ServiceEvent",
     "create_app",
     "demo_service",
 ]

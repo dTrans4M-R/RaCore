@@ -780,3 +780,33 @@ more-authoritative document does **not** invalidate a still-grounded cached answ
 is unchanged) — correct under the grounding definition, but for high-stakes corpora the conservative
 config is `invalidate(tenant)` on every ingest. (3) `live_ids` reads the tenant's full chunk-ID set;
 a production store would expose a cheaper "contains these IDs" check.
+
+### ADR-0033 — Per-request observability at the service layer, reusing the stage trace (Phase 5, slice 4)
+
+**Context.** A deployed engine has to answer "is it working, for whom, and at what cost?" — the same
+numbers the eval harness gates in aggregate (latency, cache behaviour, tokens, abstain rate,
+grounding), but *per request* and sliced by tenant. The temptation is to scatter `logging` calls and
+a second timing clock through the core. That would both clutter the core and risk a clock that
+disagrees with the harness.
+
+**Decision.** Observability is **purely additive at the service layer** — the core is untouched. The
+pipeline already records per-stage timings (ADR-0010) and token usage (ADR-0018) on the `Answer` /
+`IngestReport` it returns, so `RaCoreService` builds one structured `ServiceEvent` per call *from
+that result* and hands it to a pluggable `Observer` (a port). `duration_ms` is the operation's own
+per-stage total, not a re-measured wall clock, so it can't drift from what the harness reports. The
+default sink, `LoggingObserver`, emits one JSON line through stdlib `logging` — $0, no dependency; a
+statsd / OpenTelemetry / billing sink is another adapter behind the same port. When no observer is
+wired (the default), emission is a single null check.
+
+A key field is `cache_hit`, read straight off the stage trace: a grounding-gated cache hit runs
+exactly one `cache` stage and nothing else (ADR-0032), so hit-rate, p95 latency, abstain rate, and
+tokens-per-answer per tenant all fall out of these lines with **no extra instrumentation** — the
+dividend of having made per-stage timing first-class on day one.
+
+**Result.** Tests assert each operation emits one well-formed event, that `cache_hit` flips false→true
+across a cold then warm ask, that an abstain is reported, and that the event flattens to a single
+log-ready dict. Gate green: **135 passed**. **Honest caveats / deferred:** the event reports *tokens*,
+not USD — converting to cost is the billing layer's job (the price table lives in `eval/pricing.py`,
+deliberately not pulled into the service); `request_id` is a fresh UUID, not yet threaded from an
+inbound trace header (the hook for distributed tracing); and the ASGI layer does not add HTTP-level
+fields (status, path) to the event yet — a transport-specific enrichment for later.

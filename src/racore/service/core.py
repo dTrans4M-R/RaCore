@@ -3,18 +3,20 @@
 ``RaCoreService`` is the synchronous-to-wire seam ADR-0009 anticipated ("a synchronous facade may
 wrap the async core for simple embedding; never the reverse"). It is *not* a second pipeline: all
 retrieval, grounding, and memory logic stays in ``racore.core``. What lives here is only
-product-surface concern — mapping a wire request onto the core objects, scoping it to a tenant, and
-the guard rails an external caller needs (memory endpoints require a memory store to be configured).
+product-surface concern — mapping a wire request onto the core objects, scoping it to a tenant, the
+guard rails an external caller needs (memory endpoints require a memory store), and emitting one
+structured observability event per request (ADR-0033).
 
 The same service backs every transport: the ASGI app (``racore.service.asgi``), an embedded import,
-or a future CLI — so multi-tenancy and the memory loop are exercised once, here, and inherited by
-all of them. Tenancy is not a feature added here; it is the ``tenant_id`` the store and memory
-already namespace on (``InMemoryVectorStore._by_tenant``, one memory file per ``(tenant, user)``).
-The service simply refuses to let a request cross that boundary.
+or a future CLI — so multi-tenancy, the memory loop, and observability are exercised once, here, and
+inherited by all of them. Tenancy is not a feature added here; it is the ``tenant_id`` the store and
+memory already namespace on (``InMemoryVectorStore._by_tenant``, one memory file per
+``(tenant, user)``). The service simply refuses to let a request cross that boundary.
 """
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -31,12 +33,14 @@ from racore.adapters.vectorstores import InMemoryVectorStore
 from racore.core.ids import content_id
 from racore.core.pipeline import Pipeline
 from racore.core.types import MemoryTurn, Query
+from racore.service.observability import ServiceEvent
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from racore.core.ports import MemoryStore
     from racore.core.types import Answer, IngestReport, MemoryItem
+    from racore.service.observability import Observer
     from racore.service.types import (
         AnswerRequest,
         IngestRequest,
@@ -61,19 +65,36 @@ class RaCoreService:
     """Wraps a configured ``Pipeline`` and exposes the four product operations.
 
     Holds no state of its own — the pipeline's adapters hold the corpus and memory — so a single
-    service instance is safe to share across concurrent requests (the async core does the I/O)."""
+    service instance is safe to share across concurrent requests (the async core does the I/O). An
+    optional ``observer`` receives one ``ServiceEvent`` per request; when absent (the default),
+    emission is a single null check and costs nothing."""
 
     pipeline: Pipeline
+    observer: Observer | None = None
 
     async def ingest(self, request: IngestRequest) -> IngestReport:
         """Ingest a batch of documents into ``request.tenant_id``'s corpus (incremental)."""
         source = InMemoryDocumentSource([(doc.source, doc.text) for doc in request.documents])
-        return await self.pipeline.ingest(source, request.tenant_id, prune=request.prune)
+        report = await self.pipeline.ingest(source, request.tenant_id, prune=request.prune)
+        self._emit(
+            "ingest",
+            request.tenant_id,
+            None,
+            {
+                "documents": report.documents,
+                "chunks": report.chunks,
+                "added": report.added,
+                "unchanged": report.unchanged,
+                "deleted": report.deleted,
+            },
+            report.total_millis,
+        )
+        return report
 
     async def answer(self, request: AnswerRequest) -> Answer:
         """Answer one question. Returns the streamable ``Answer`` (ADR-0009) so a transport can
         stream the text and let citations/grounding follow a beat later (ADR-0020)."""
-        return await self.pipeline.answer(
+        answer = await self.pipeline.answer(
             Query(
                 text=request.text,
                 tenant_id=request.tenant_id,
@@ -81,11 +102,20 @@ class RaCoreService:
                 k=request.k,
             )
         )
+        self._emit(
+            "answer",
+            request.tenant_id,
+            request.user_id,
+            _answer_detail(answer),
+            answer.total_millis,
+        )
+        return answer
 
     async def read_memory(self, request: MemoryReadRequest) -> tuple[MemoryItem, ...]:
         """Return a user's most relevant memories — only ever that ``(tenant, user)``'s file."""
         memory = self._require_memory()
         items = await memory.read(request.tenant_id, request.user_id, request.query, request.k)
+        self._emit("read_memory", request.tenant_id, request.user_id, {"n_items": len(items)}, 0.0)
         return tuple(items)
 
     async def write_memory(self, request: MemoryWriteRequest) -> tuple[MemoryItem, ...]:
@@ -105,6 +135,9 @@ class RaCoreService:
         )
         items = await self.pipeline.extractor.extract([turn])
         await memory.write(request.tenant_id, request.user_id, items)
+        self._emit(
+            "write_memory", request.tenant_id, request.user_id, {"n_stored": len(items)}, 0.0
+        )
         return tuple(items)
 
     def _require_memory(self) -> MemoryStore:
@@ -112,15 +145,59 @@ class RaCoreService:
             raise ServiceError("memory is not configured", code="memory_not_configured")
         return self.pipeline.memory
 
+    def _emit(
+        self,
+        operation: str,
+        tenant_id: str,
+        user_id: str | None,
+        detail: dict[str, object],
+        duration_ms: float,
+    ) -> None:
+        """Hand one structured event to the observer, if one is wired. A fresh ``request_id`` ties
+        the log line to a single call; ``duration_ms`` is the operation's own per-stage total
+        (ADR-0010), never a re-measured clock."""
+        observer = self.observer
+        if observer is None:
+            return
+        observer.observe(
+            ServiceEvent(
+                request_id=uuid.uuid4().hex,
+                operation=operation,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                duration_ms=duration_ms,
+                detail=detail,
+            )
+        )
 
-def demo_service(memory_dir: Path) -> RaCoreService:
+
+def _answer_detail(answer: Answer) -> dict[str, object]:
+    """The operational metrics behind one answer, ready for a log line.
+
+    ``cache_hit`` is read off the stage trace: a cache hit runs exactly one ``cache`` stage and
+    nothing else (ADR-0032), so the operator sees hit-rate without any extra instrumentation."""
+    stage_names = [t.stage for t in answer.timings]
+    return {
+        "cache_hit": stage_names == ["cache"],
+        "abstained": answer.abstained,
+        "grounded": answer.grounding.is_grounded,
+        "faithfulness": answer.grounding.faithfulness,
+        "n_retrievals": len(answer.retrievals),
+        "n_citations": len(answer.citations),
+        "tokens_in": sum(u.input_tokens for u in answer.usages),
+        "tokens_out": sum(u.output_tokens for u in answer.usages),
+    }
+
+
+def demo_service(memory_dir: Path, *, observer: Observer | None = None) -> RaCoreService:
     """The default $0 stack wired with per-user memory — for tests, demos, and local runs.
 
     Deterministic and zero-spend (ADR-0007): the mock embedder, in-memory store, extractive LLM,
     strict substring judge, plus a file-backed memory store and the rule-based extractor so the
     memory endpoints work out of the box, and the grounding-gated answer cache so repeat asks are
-    fast and stay correct (ADR-0031). Swapping in real providers (Voyage, Claude, pgvector) is a
-    constructor change behind the same ports — never a fork of this facade."""
+    fast and stay correct (ADR-0032). Pass an ``observer`` to receive per-request events. Swapping
+    in real providers (Voyage, Claude, pgvector) is a constructor change behind the same ports — not
+    a fork of this facade."""
     pipeline = Pipeline(
         embedder=MockEmbeddingProvider(),
         store=InMemoryVectorStore(),
@@ -132,4 +209,4 @@ def demo_service(memory_dir: Path) -> RaCoreService:
         extractor=RuleBasedMemoryExtractor(),
         cache=GroundingGatedCache(),
     )
-    return RaCoreService(pipeline=pipeline)
+    return RaCoreService(pipeline=pipeline, observer=observer)
