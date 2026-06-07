@@ -1083,6 +1083,25 @@ wheels = [
 ]
 
 [[package]]
+name = "openai"
+version = "2.41.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3c/a6/5815fe2e2aca74b36c650d1bd43b69827cee568073d0d2d9b6fc5aaac80c/openai-2.41.0.tar.gz", hash = "sha256:db5c362acd6604b84f076abbefa66826ea4b46ecba2954ed866e6a149a1352c0", size = 783525, upload-time = "2026-06-03T22:39:40.719Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/51/d82bb424e8aa372190c5233253a2ceb399a778747d18b42cff487411e663/openai-2.41.0-py3-none-any.whl", hash = "sha256:20cc7952e8501c7e5773dd2ef7be437bae9cb549044902e1041a83a54516e375", size = 1353378, upload-time = "2026-06-03T22:39:38.964Z" },
+]
+
+[[package]]
 name = "orjson"
 version = "3.11.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1533,6 +1552,9 @@ source = { editable = "." }
 anthropic = [
     { name = "anthropic" },
 ]
+openai = [
+    { name = "openai" },
+]
 voyage = [
     { name = "voyageai" },
 ]
@@ -1548,9 +1570,10 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.107" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.41" },
     { name = "voyageai", marker = "extra == 'voyage'", specifier = ">=0.4" },
 ]
-provides-extras = ["anthropic", "voyage"]
+provides-extras = ["anthropic", "openai", "voyage"]
 
 [package.metadata.requires-dev]
 dev = [

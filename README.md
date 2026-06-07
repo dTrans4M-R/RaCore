@@ -227,8 +227,19 @@ lexical embedder where no score threshold can. The gate's tokens are priced into
 `--gate cascade` exists — it escalates to the paid gate only above a `--gate-min-score` floor, and can
 *optionally* answer very-high-scoring rows for free via `--gate-high` (**off by default**: a high score
 can be a semantic false positive — e.g. "rings on Neptune" matching "Saturn's rings" — so the
-free-answer band is opt-in and must be calibrated, never trading away the abstention guarantee). The
-same port takes a **local** LLM (Ollama, OpenAI-compatible) with zero core change (ADR-0021).
+free-answer band is opt-in and must be calibrated, never trading away the abstention guarantee).
+
+The same port runs a **local** model at **$0 per call**: `OpenAIRelevanceGate` speaks the
+chat-completions protocol every local runtime (Ollama, vLLM, LM Studio) exposes, so the
+embedder-independent gate needs no key and no per-token spend when self-hosted (ADR-0022):
+
+```bash
+ollama pull llama3.2   # any small instruct model answers the one-word ANSWER/ABSTAIN
+uv run --extra openai python -m racore.eval --gate llm --gate-provider openai --model llama3.2 -v
+```
+
+The *same* adapter targets the hosted OpenAI API with `--gate-base-url https://api.openai.com/v1` and a
+key — "paid ↔ local" is a one-flag change behind the port, never a fork.
 
 ## License
 

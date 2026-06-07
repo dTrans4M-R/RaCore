@@ -313,3 +313,39 @@ positive), re-introducing a false answer that the full-stack run caught only via
 refusal (ADR-0013). The free-*abstain* low band stays safe (worst case a false refusal, never a
 fabrication); the free-answer band must be calibrated on the harness before opting in, so the default
 never trades away the abstention guarantee for a cost saving.
+
+### ADR-0022 — Local relevance gate over the OpenAI-compatible protocol (paid ↔ local)
+**Context:** ADR-0021 closed the refusal gap with a *paid* semantic gate (Claude) and named the obvious
+follow-on: "a local LLM (Ollama, OpenAI-compatible) drops in behind the same port as a sibling of the
+paid gate." That sibling matters for the product's core promise — *the `$0` stack must be best-positioned
+so paid only improves quality.* Between the `$0` `ThresholdRelevanceGate` (no model, but blind on a
+lexical embedder) and the frontier paid gate there was no **free, semantic** tier. A self-hosted small
+model is exactly that tier: embedder-independent abstention at **zero per-call spend**.
+
+**Decision:** add `OpenAIRelevanceGate` behind the same `RelevanceGate` port, speaking the
+**chat-completions** protocol. That protocol is the lingua franca of local runtimes — Ollama, vLLM, LM
+Studio, llama.cpp all expose it, and so does the hosted OpenAI API — so **one** adapter reaches a local
+($0) model or a hosted one, selected only by `base_url` (and, for hosted, `api_key`). The SDK is an
+optional extra (`racore[openai]`, newest stable `openai>=2.41`), imported lazily, with an injected client
+`Protocol` so the adapter is fully typed and offline-testable; the core install stays dependency-free
+(ADR-0007). Defaults target a local Ollama endpoint (`http://localhost:11434/v1`, placeholder key) so the
+$0 path works once a model is pulled.
+
+Because a *second* concrete LLM gate now exists, the verdict-deciding pieces — the strict one-word system
+prompt, the evidence rendering, the ANSWER/ABSTAIN parse — are lifted into a provider-neutral
+`adapters/_relevance_llm.py` and shared **verbatim** by both gates. This is the abstraction the house
+rule sanctions ("add it when the second case exists, not in anticipation"): two gates that disagreed on
+the same evidence because their prompts drifted would be a silent correctness bug. Each adapter keeps only
+its own client call and token accounting, which genuinely *are* provider-specific. CLI:
+`--gate-provider {anthropic,openai}` + `--gate-base-url`; the default run is unchanged (`anthropic`).
+
+**Consequences:** the "paid ↔ local" reach is delivered with no heavy dependency and no new lock-in —
+swapping the gate's brain is a config change, not a fork. Cost stays honest via `UsageReporter`
+(ADR-0018): a self-hosted call reports zero tokens → prices to `$0`, which is *true* (no per-token
+charge), while a hosted OpenAI call is priced like any other. Verified offline with a fake client (call
+shape, verdict parse, empty-retrieval skip, cascade composition + usage forwarding) **and** against the
+real `AsyncOpenAI` 2.41 constructor (the contract test, offline — it builds the client, makes no request);
+mypy `--strict` passes with and without the extra. Live validation against a running local model is the
+operator's manual step (`--gate llm --gate-provider openai`), the same opt-in pattern as the paid gate —
+no server runs in CI. The in-process cross-encoder gate remains deferred (heaviest dependency; Finding D
+shows no measurable retrieval gap yet).

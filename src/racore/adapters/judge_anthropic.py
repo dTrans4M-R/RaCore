@@ -9,7 +9,8 @@ semantic judge that decides entailment instead of lexical overlap.
 
 Mirrors ``AnthropicLLM`` (and reuses its client plumbing): optional extra (``racore[anthropic]``),
 lazy SDK, narrow client ``Protocol`` (offline-testable), **one adapter behind the port** — not a
-lock-in. An OpenAI/local judge is a future drop-in behind the same `EntailmentJudge` port.
+lock-in. An OpenAI/local judge is a future drop-in behind the same `EntailmentJudge` port — the
+``llm_openai`` plumbing it would reuse already exists (see ``OpenAIRelevanceGate``, ADR-0022).
 """
 
 from __future__ import annotations

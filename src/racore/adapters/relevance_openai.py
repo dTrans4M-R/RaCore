@@ -1,17 +1,15 @@
-"""An opt-in LLM relevance gate (Claude) for the ``RelevanceGate`` port.
+"""A local-or-hosted LLM relevance gate over the OpenAI-compatible protocol.
 
-The deterministic ``ThresholdRelevanceGate`` decides from retrieval *scores*, which only
-separate relevant from irrelevant when the embedder is semantic (ADR-0021). This adapter asks
-the question directly — *does this evidence actually answer the query?* — on meaning, so it is
-**embedder-independent**: it closes the refusal gap even on the lexical ``$0`` stack, where no
-score threshold can. It is the cascade's expensive tier, escalated to only for the gray-zone
-cases the cheap gate can't decide.
+The semantic sibling of ``AnthropicRelevanceGate``: same port (``RelevanceGate``), same verbatim
+prompt and verdict-parse (the shared ``_relevance_llm`` helpers, so the two gates can never
+disagree on the same evidence), but it talks chat-completions — so the *same* adapter runs against
+a **local** Ollama/vLLM/LM Studio model ($0, private) or the hosted OpenAI API, chosen only by
+``base_url``. That makes the embedder-independent abstention check available with **zero per-call
+spend** when self-hosted: the cheap-but-smart middle tier of the cascade (ADR-0022).
 
-Mirrors ``AnthropicEntailmentJudge`` and reuses ``AnthropicLLM``'s client plumbing: optional
-extra (``racore[anthropic]``), lazy SDK, a narrow injected client ``Protocol`` (offline-testable),
-and ``UsageReporter`` so the gate's tokens are priced into cost/answer (ADR-0018). The prompt and
-verdict-parse are the provider-neutral ``_relevance_llm`` helpers, shared verbatim with the local
-``OpenAIRelevanceGate`` so the two gates can never disagree on the same evidence (ADR-0022).
+Lazy SDK (``racore[openai]``), an injected client ``Protocol`` (offline-testable), and
+``UsageReporter`` so any hosted tokens are priced into cost/answer (ADR-0018). Mirrors
+``AnthropicRelevanceGate`` structurally; only the client call shape differs.
 """
 
 from __future__ import annotations
@@ -20,20 +18,21 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from racore.adapters._relevance_llm import GATE_SYSTEM, parse_verdict, render_gate_prompt
-from racore.adapters.llm_anthropic import (
-    AnthropicConfig,
+from racore.adapters.llm_openai import (
+    OpenAIConfig,
     _build_client,
     _extract_text,
     _extract_usage,
 )
 
 if TYPE_CHECKING:
-    from racore.adapters.llm_anthropic import _Client
+    from racore.adapters.llm_openai import _Client
     from racore.core.types import RelevanceCheck, TokenUsage
 
 
-class AnthropicRelevanceGate:
-    """Semantic answer-vs-abstain via Claude, behind the ``RelevanceGate`` port (batch-first).
+class OpenAIRelevanceGate:
+    """Semantic answer-vs-abstain via an OpenAI-compatible model, behind the ``RelevanceGate``
+    port (batch-first). Local by default; hosted by config.
 
     ``max_evidence`` caps how many top passages are shown to the model, bounding the per-query
     cost; the reranked order means the most relevant evidence is kept.
@@ -41,12 +40,12 @@ class AnthropicRelevanceGate:
 
     def __init__(
         self,
-        config: AnthropicConfig | None = None,
+        config: OpenAIConfig | None = None,
         *,
         client: _Client | None = None,
         max_evidence: int = 5,
     ) -> None:
-        self._config = config or AnthropicConfig()
+        self._config = config or OpenAIConfig()
         self._client: _Client | None = client
         self._usage: list[TokenUsage] = []
         self._max_evidence = max_evidence
@@ -61,16 +60,18 @@ class AnthropicRelevanceGate:
     async def _one(self, client: _Client, check: RelevanceCheck) -> bool:
         if not check.retrievals:
             return False  # nothing retrieved -> abstain, no LLM call (no cost)
-        message = await client.messages.create(
+        response = await client.chat.completions.create(
             model=self._config.model,
             max_tokens=8,  # a one-word verdict; keeps the per-query cost minimal
             temperature=0.0,
-            system=GATE_SYSTEM,
-            messages=[{"role": "user", "content": render_gate_prompt(check, self._max_evidence)}],
+            messages=[
+                {"role": "system", "content": GATE_SYSTEM},
+                {"role": "user", "content": render_gate_prompt(check, self._max_evidence)},
+            ],
         )
-        # Record the gate call's tokens so cost/answer counts it, not just the generator.
-        self._usage.append(_extract_usage(message, self._config.model))
-        return parse_verdict(_extract_text(message))
+        # Record the gate call's tokens so cost/answer counts it (zero for a self-hosted model).
+        self._usage.append(_extract_usage(response, self._config.model))
+        return parse_verdict(_extract_text(response))
 
     def drain_usage(self) -> list[TokenUsage]:
         """Usage accumulated since the last drain; resets on read (the ``UsageReporter`` port)."""

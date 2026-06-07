@@ -18,9 +18,11 @@ from racore.adapters.judge_anthropic import AnthropicEntailmentJudge
 from racore.adapters.judges import SubstringEntailmentJudge, TokenOverlapEntailmentJudge
 from racore.adapters.llm import ExtractiveLLM
 from racore.adapters.llm_anthropic import AnthropicConfig, AnthropicLLM
+from racore.adapters.llm_openai import OpenAIConfig
 from racore.adapters.memory import FileMemoryStore
 from racore.adapters.relevance import CascadeRelevanceGate, ThresholdRelevanceGate
 from racore.adapters.relevance_anthropic import AnthropicRelevanceGate
+from racore.adapters.relevance_openai import OpenAIRelevanceGate
 from racore.adapters.rerankers import NoopReranker
 from racore.adapters.sources import InMemoryDocumentSource
 from racore.adapters.vectorstores import InMemoryVectorStore
@@ -38,6 +40,8 @@ __all__ = [
     "InMemoryVectorStore",
     "MockEmbeddingProvider",
     "NoopReranker",
+    "OpenAIConfig",
+    "OpenAIRelevanceGate",
     "SubstringEntailmentJudge",
     "ThresholdRelevanceGate",
     "TokenOverlapEntailmentJudge",

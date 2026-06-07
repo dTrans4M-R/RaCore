@@ -16,9 +16,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from racore.adapters._relevance_llm import parse_verdict
 from racore.adapters.llm_anthropic import AnthropicConfig
 from racore.adapters.relevance import CascadeRelevanceGate
-from racore.adapters.relevance_anthropic import AnthropicRelevanceGate, _should_answer
+from racore.adapters.relevance_anthropic import AnthropicRelevanceGate
 from racore.core.types import Chunk, RelevanceCheck, Retrieval
 
 if TYPE_CHECKING:
@@ -164,11 +165,11 @@ async def _usage_case() -> None:
 
 
 def test_should_answer_parses_the_one_word_verdict() -> None:
-    assert _should_answer("ANSWER")
-    assert _should_answer("Answer: yes")
-    assert not _should_answer("ABSTAIN")
-    assert not _should_answer("I would abstain.")
-    assert not _should_answer("not sure")  # ambiguous defaults to abstain (trust-safe)
+    assert parse_verdict("ANSWER")
+    assert parse_verdict("Answer: yes")
+    assert not parse_verdict("ABSTAIN")
+    assert not parse_verdict("I would abstain.")
+    assert not parse_verdict("not sure")  # ambiguous defaults to abstain (trust-safe)
 
 
 def test_missing_sdk_raises_a_helpful_error(monkeypatch: pytest.MonkeyPatch) -> None:

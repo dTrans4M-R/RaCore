@@ -43,24 +43,45 @@ def _make_judge(judge_kind: str, model: str | None) -> EntailmentJudge:
     return _JUDGES[judge_kind]()
 
 
+def _make_llm_gate(provider: str, model: str | None, base_url: str | None) -> RelevanceGate:
+    """Build the opt-in LLM relevance gate for the chosen provider (lazy SDK import).
+
+    'anthropic' is hosted Claude; 'openai' is any OpenAI-compatible endpoint — a local Ollama/
+    vLLM/LM Studio model ($0) or the hosted OpenAI API, selected by ``--gate-base-url``.
+    """
+    if provider == "openai":
+        from racore.adapters.llm_openai import OpenAIConfig
+        from racore.adapters.relevance_openai import OpenAIRelevanceGate
+
+        config = OpenAIConfig()
+        if model:
+            config = dataclasses.replace(config, model=model)
+        if base_url:
+            config = dataclasses.replace(config, base_url=base_url)
+        return OpenAIRelevanceGate(config)
+    from racore.adapters.llm_anthropic import AnthropicConfig
+    from racore.adapters.relevance_anthropic import AnthropicRelevanceGate
+
+    aconfig = AnthropicConfig(model=model) if model else AnthropicConfig()
+    return AnthropicRelevanceGate(aconfig)
+
+
 def _make_gate(
     gate_kind: str,
     model: str | None,
     min_score: float,
     margin: float,
     high: float | None,
+    provider: str = "anthropic",
+    base_url: str | None = None,
 ) -> RelevanceGate | None:
     """Build the selected relevance gate. 'none' (default) leaves the pipeline ungated;
-    'llm'/'cascade' are opt-in and lazily import the SDK."""
+    'llm'/'cascade' are opt-in and lazily import the SDK of the chosen ``provider``."""
     if gate_kind == "none":
         return None
     if gate_kind == "threshold":
         return ThresholdRelevanceGate(min_score=min_score, min_margin=margin)
-    from racore.adapters.llm_anthropic import AnthropicConfig
-    from racore.adapters.relevance_anthropic import AnthropicRelevanceGate
-
-    config = AnthropicConfig(model=model) if model else AnthropicConfig()
-    llm_gate = AnthropicRelevanceGate(config)
+    llm_gate = _make_llm_gate(provider, model, base_url)
     if gate_kind == "llm":
         return llm_gate
     # cascade: free score-band decisions, with the LLM gate only in the gray zone [min_score, high).
@@ -77,6 +98,8 @@ def _build_pipeline(
     gate_min_score: float = 0.0,
     gate_margin: float = 0.0,
     gate_high: float | None = None,
+    gate_provider: str = "anthropic",
+    gate_base_url: str | None = None,
 ) -> Pipeline:
     """Start from the $0 stack and swap only the embedder/LLM/judge/gate that were selected."""
     pipeline = dataclasses.replace(demo_pipeline(), judge=_make_judge(judge_kind, model))
@@ -91,7 +114,9 @@ def _build_pipeline(
 
         config = AnthropicConfig(model=model) if model else AnthropicConfig()
         pipeline = dataclasses.replace(pipeline, llm=AnthropicLLM(config))
-    gate = _make_gate(gate_kind, model, gate_min_score, gate_margin, gate_high)
+    gate = _make_gate(
+        gate_kind, model, gate_min_score, gate_margin, gate_high, gate_provider, gate_base_url
+    )
     if gate is not None:
         pipeline = dataclasses.replace(pipeline, gate=gate)
     return pipeline
@@ -107,6 +132,8 @@ async def _run(
     gate_min_score: float = 0.0,
     gate_margin: float = 0.0,
     gate_high: float | None = None,
+    gate_provider: str = "anthropic",
+    gate_base_url: str | None = None,
 ) -> HarnessReport:
     pipeline = _build_pipeline(
         llm_kind,
@@ -118,6 +145,8 @@ async def _run(
         gate_min_score,
         gate_margin,
         gate_high,
+        gate_provider,
+        gate_base_url,
     )
     await pipeline.ingest(golden_source())
     return await run(pipeline, golden_dataset(), default_evaluators())
@@ -155,8 +184,9 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=None,
-        help="override the Anthropic model id (used by --llm anthropic, --judge llm, and the "
-        "--gate llm/cascade gates), e.g. claude-haiku-4-5.",
+        help="override the LLM model id (used by --llm anthropic, --judge llm, and the --gate "
+        "llm/cascade gates). For --gate-provider openai it sets the local/hosted model "
+        "(e.g. llama3.2, gpt-4o-mini); otherwise the Anthropic model (e.g. claude-haiku-4-5).",
     )
     parser.add_argument(
         "--gate",
@@ -187,6 +217,19 @@ def main() -> None:
         "before use.",
     )
     parser.add_argument(
+        "--gate-provider",
+        choices=["anthropic", "openai"],
+        default="anthropic",
+        help="which LLM backs the 'llm'/'cascade' gate: 'anthropic' (hosted Claude, default) or "
+        "'openai' (an OpenAI-compatible endpoint: local Ollama/vLLM, or hosted OpenAI).",
+    )
+    parser.add_argument(
+        "--gate-base-url",
+        default=None,
+        help="base URL for --gate-provider openai (default: local Ollama "
+        "http://localhost:11434/v1). Point at vLLM/LM Studio or https://api.openai.com/v1.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -205,6 +248,8 @@ def main() -> None:
             args.gate_min_score,
             args.gate_margin,
             args.gate_high,
+            args.gate_provider,
+            args.gate_base_url,
         )
     )
     header = f"# embedder={args.embedder}  llm={args.llm}  judge={args.judge}  gate={args.gate}"
@@ -218,6 +263,10 @@ def main() -> None:
         header += f"  gate_margin={args.gate_margin}"
     if args.gate == "cascade":
         header += f"  gate_high={args.gate_high if args.gate_high is not None else 'off'}"
+    if args.gate in {"llm", "cascade"} and args.gate_provider != "anthropic":
+        header += f"  gate_provider={args.gate_provider}"
+        if args.gate_base_url:
+            header += f"  gate_base_url={args.gate_base_url}"
     print(header)
     print(report.render(verbose=args.verbose))
 

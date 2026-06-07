@@ -13,6 +13,10 @@ dependencies = []
 # Opt-in provider adapters. The core stays dependency-free (ADR-0007); these are only
 # needed when you swap a real provider in behind a port. Pin the newest stable SDK.
 anthropic = ["anthropic>=0.107"]
+# The OpenAI SDK speaks the chat-completions protocol that *every* OpenAI-compatible runtime
+# exposes — Ollama, vLLM, LM Studio, llama.cpp — so one adapter reaches both a local ($0) model
+# and the hosted OpenAI API, selected only by `base_url`. That's the "paid <-> local" reach.
+openai = ["openai>=2.41"]
 voyage = ["voyageai>=0.4"]
 
 [project.urls]
@@ -66,6 +70,13 @@ warn_unused_ignores = true
 # `Protocol`, so the core call path is fully checked regardless.
 [[tool.mypy.overrides]]
 module = "anthropic.*"
+ignore_missing_imports = true
+
+# Same optional-dependency pattern as `anthropic`: `openai` is absent from the default ($0) dev
+# install, so its types are unknown when it isn't installed. The adapter is typed against a local
+# `Protocol`, so our call path stays fully checked regardless. Keeps the gate green either way.
+[[tool.mypy.overrides]]
+module = "openai.*"
 ignore_missing_imports = true
 
 # Same optional-dependency pattern as `anthropic` above: `voyageai` is absent from the default

@@ -67,7 +67,7 @@ flowchart TB
 | `MemoryStore` | per-user read/write/compaction | pg-memory · file-memory |
 | `LLMProvider` | grounded generation (streaming) | anthropic · openai |
 | `EntailmentJudge` | per-claim: does cited evidence support it? | substring · token-overlap · llm-judge |
-| `RelevanceGate` | answer-vs-abstain on the retrieved evidence (proactive refusal) | threshold · llm-gate · cascade |
+| `RelevanceGate` | answer-vs-abstain on the retrieved evidence (proactive refusal) | threshold · anthropic · openai (local/hosted) · cascade |
 | `Evaluator` | score a run against a dataset | retrieval · grounding · answer |
 
 ## 5. The two pipelines (`core/pipeline.py`)
