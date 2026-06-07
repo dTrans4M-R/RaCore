@@ -415,11 +415,15 @@ instead of 17, ~50 tokens/answer.** Two findings worth keeping:
   refused. For a high-confidence retrieval the *score* is a better judge than a mid-size LLM, which
   over-thinks; the LLM earns its keep only in the ambiguous middle. That is the cascade's deep
   justification, now measured.
-- **The one residual is p1** (0.592, gray zone, qwen refuses); pushing `--gate-high` to 0.55 would free it
-  (→ ~1.000) but narrows the margin over n1 (0.526) to 0.024. That margin — and the high band's safety
-  generally — rests on **just three negatives**, so the calibration is **corpus-specific and must be
-  re-validated on a larger/harder negative set** before trusting the high band in production (ADR-0021's
-  off-by-default stance stands for the general case). The un-forced **0.941** is the honest number.
+- **The one residual is p1** (0.592, gray zone, qwen refuses). **Confirmed empirically: `--gate-high 0.55`
+  frees p1 → refusal/answer 1.000 / 1.000 at just 2 gray-zone LLM calls (p5, n1) — the architecture reaches
+  the ceiling.** But **0.941, not 1.000, is the *shippable* number**, for two reasons. (a) **Overfit:**
+  high=0.55 clears n1 (0.526) by only 0.024, and that margin rests on **three negatives**; a larger/harder
+  negative set must re-validate before the high band is trusted live (ADR-0021's off-by-default stance
+  holds). (b) **Latency tail:** even with calls this rare, **p95 ≈ 20 s** (vs p50 0.34 s), because each
+  *local* gray-zone call is slow and variable. The cascade makes the slow calls rare but can't make them
+  fast — so a production cascade wants a **hosted or faster gray-zone judge** to crush the tail. That is
+  precisely where paid "only improves": it buys **robustness and p95**, not the achievable ceiling.
 
 This closes the Phase-2 gate as designed: a free deterministic floor + a free high band carry the
 confident majority at interactive speed and `$0`, and a smart-but-slow LLM is reserved for the ambiguous
