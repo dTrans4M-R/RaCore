@@ -269,11 +269,20 @@ class Answer:
 
 @dataclass(frozen=True, slots=True)
 class IngestReport:
-    """Outcome of ``pipeline.ingest()`` — what landed, and how long each stage took."""
+    """Outcome of ``pipeline.ingest()`` — what landed, and how long each stage took.
+
+    The freshness counts make incremental re-index *measurable* (ADR-0023): ``added`` chunks
+    were embedded and upserted this run, ``unchanged`` were already present (identical content
+    hash) and skipped — so a re-ingest of an unchanged corpus embeds nothing — and ``deleted``
+    were pruned because they no longer appear in the source. ``added + unchanged == chunks``.
+    """
 
     documents: int
     chunks: int
     timings: tuple[StageTiming, ...]
+    added: int = 0
+    unchanged: int = 0
+    deleted: int = 0
 
     @property
     def total_millis(self) -> float:

@@ -430,3 +430,29 @@ confident majority at interactive speed and `$0`, and a smart-but-slow LLM is re
 minority — fast, cheap, safe, and good. Paid models (a stronger gray-zone judge) or a local embedder are
 the only remaining levers to reach 1.000, which is exactly "the `$0` stack is best-positioned, paid only
 improves."
+
+### ADR-0023 — Incremental re-index by content-hash diff (Phase 3, slice 1)
+
+**Context.** Phase 3 (Freshness) DoD: "incremental re-index works." The old `ingest()` re-embedded
+*every* chunk on every run and only ever upserted — so an **edited** document left its previous chunks in
+the index (its content-hash ID changed, ADR-0011, so the old ID was orphaned, never overwritten) and a
+**removed** document was never cleaned up. Re-ingest was neither incremental (it paid to embed unchanged
+content) nor correct (stale chunks stayed searchable). Both are freshness bugs.
+
+**Decision.** Make `ingest()` diff the fetch against the store on the content-hash ID — the operation
+ADR-0011 was chosen to enable. The `VectorStore` port gains two methods, `chunk_ids(tenant)` and
+`delete(ids, tenant)`. `ingest()` now embeds **only** chunks whose ID is not already stored, skips the
+rest, and — when called with `prune=True` — deletes any stored chunk absent from the fetch. `IngestReport`
+gains `added / unchanged / deleted` so the behaviour is **measurable**, per the no-change-without-a-number
+rule. `prune` defaults to **False** (purely additive — several sources can share a tenant across calls, the
+Phase-0 contract, unchanged); `prune=True` treats the fetch as the tenant's *complete* corpus and is the
+freshness path. Whole-tenant reconcile is the demo semantics; a connector-scoped (per-namespace) sync is a
+later refinement to add when a second real connector exists — not before (no premature abstraction).
+
+**Measured (`tests/test_ingest_incremental.py`, $0/stdlib, no API).** First ingest of a 3-doc corpus →
+`added=3`. Re-ingest unchanged → `added=0, unchanged=3, deleted=0` and the counting embedder records
+**zero** new embeddings — re-ingest is a true no-op, not just idempotent storage. Edit one doc, remove one,
+add one → `added=2, unchanged=1, deleted=2`, embedding work is the 2 new chunks only (proportional to the
+*change*, not the corpus), and a post-sync search returns exactly the new corpus — the removed doc and the
+pre-edit text are gone (the freshness guarantee). The existing baseline eval and the idempotent-reingest
+e2e test are unchanged, since the default path is still additive and first-ingest numbers are identical.

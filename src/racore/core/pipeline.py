@@ -6,7 +6,8 @@ Two cross-cutting concerns are built in from day one rather than bolted on:
   ``_Stopwatch`` so a latency regression is localizable to the stage that caused it.
 * **Content-hash IDs** (ADR-0011) — documents and chunks are identified by a hash of
   their content (minted in the ingest stages via ``racore.core.ids``), so re-ingesting
-  unchanged content is an idempotent upsert.
+  unchanged content is an idempotent upsert. ``ingest()`` diffs against the store on this
+  hash to re-index incrementally (ADR-0023): embed only what changed, prune what's gone.
 
 Grounding, relevance, and memory are *stages on the main answer path*, not add-ons —
 matching ``docs/architecture.md`` §5. The grounding logic itself lives in
@@ -109,8 +110,18 @@ class Pipeline:
     drop_unsupported: bool = False
     gate: RelevanceGate | None = None
 
-    async def ingest(self, source: DocumentSource, tenant_id: str = "default") -> IngestReport:
-        """``fetch -> chunk -> embed -> upsert``, timing each stage."""
+    async def ingest(
+        self, source: DocumentSource, tenant_id: str = "default", *, prune: bool = False
+    ) -> IngestReport:
+        """``fetch -> chunk -> diff -> embed -> upsert [-> prune]``, timing each stage.
+
+        Incremental by content hash (ADR-0023): only chunks whose ID is not already stored are
+        embedded and upserted, so re-ingesting unchanged content does no embedding work and is a
+        true no-op. With ``prune=True`` the fetch is treated as the tenant's *complete* corpus and
+        any stored chunk absent from it is deleted — so an edited or removed document leaves no
+        stale chunk behind (the freshness guarantee). ``prune=False`` (the default) is purely
+        additive: it never deletes, so several sources can be ingested into one tenant across calls.
+        """
         sw = _Stopwatch()
 
         with sw.stage("fetch"):
@@ -119,18 +130,39 @@ class Pipeline:
         with sw.stage("chunk"):
             chunks = await self.chunker.chunk(documents)
 
-        with sw.stage("embed"):
-            vectors = await self.embedder.embed([c.text for c in chunks], InputType.DOCUMENT)
+        with sw.stage("diff"):
+            stored = await self.store.chunk_ids(tenant_id)
+            new_chunks = [c for c in chunks if c.id not in stored]
+            stale = stored - {c.id for c in chunks} if prune else set()
 
-        embedded = [EmbeddedChunk(chunk=c, vector=v) for c, v in zip(chunks, vectors, strict=True)]
-        # Discard ingest-time embedding usage: cost/answer is per-answer. Draining here keeps the
-        # embedder's meter clean so the first answer doesn't absorb the corpus's embed cost.
-        _drain(self.embedder)
+        embedded: list[EmbeddedChunk] = []
+        if new_chunks:
+            with sw.stage("embed"):
+                vectors = await self.embedder.embed(
+                    [c.text for c in new_chunks], InputType.DOCUMENT
+                )
+            embedded = [
+                EmbeddedChunk(chunk=c, vector=v) for c, v in zip(new_chunks, vectors, strict=True)
+            ]
+            # Discard ingest-time embedding usage: cost/answer is per-answer. Draining here keeps
+            # the embedder's meter clean so the first answer doesn't absorb the corpus's embed cost.
+            _drain(self.embedder)
 
         with sw.stage("upsert"):
             await self.store.upsert(embedded, tenant_id)
 
-        return IngestReport(documents=len(documents), chunks=len(chunks), timings=sw.timings)
+        if stale:
+            with sw.stage("prune"):
+                await self.store.delete(list(stale), tenant_id)
+
+        return IngestReport(
+            documents=len(documents),
+            chunks=len(chunks),
+            timings=sw.timings,
+            added=len(new_chunks),
+            unchanged=len(chunks) - len(new_chunks),
+            deleted=len(stale),
+        )
 
     async def answer(self, query: Query) -> Answer:
         """``memory.read -> understand -> embed -> retrieve -> rerank -> relevance ->

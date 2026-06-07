@@ -69,11 +69,14 @@ async def _reingest_is_idempotent() -> None:
     pipeline = demo_pipeline()
     source = golden_source()
 
-    await pipeline.ingest(source)
+    first = await pipeline.ingest(source)
+    assert (first.added, first.unchanged, first.deleted) == (28, 0, 0)
     (probe,) = await pipeline.embedder.embed(["planet"], InputType.QUERY)
     before = await pipeline.store.search(probe, 100, "default")
 
-    await pipeline.ingest(source)
+    second = await pipeline.ingest(source)
+    # Re-ingesting identical content is a true no-op: every chunk is unchanged, none re-embedded.
+    assert (second.added, second.unchanged, second.deleted) == (0, 28, 0)
     after = await pipeline.store.search(probe, 100, "default")
 
     assert len(before) == len(after) == 28

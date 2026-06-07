@@ -31,6 +31,16 @@ class InMemoryVectorStore:
         for item in items:
             store[item.chunk.id] = item
 
+    async def chunk_ids(self, tenant_id: str) -> set[str]:
+        return set(self._by_tenant.get(tenant_id, {}))
+
+    async def delete(self, chunk_ids: list[str], tenant_id: str) -> None:
+        store = self._by_tenant.get(tenant_id)
+        if store is None:
+            return
+        for chunk_id in chunk_ids:
+            store.pop(chunk_id, None)
+
     async def search(
         self,
         vector: Vector,

@@ -60,7 +60,7 @@ flowchart TB
 | Port | Responsibility | Example adapters |
 |---|---|---|
 | `EmbeddingProvider` | text → vectors (`document` vs `query` input types) | voyage · openai · local-bge · mock |
-| `VectorStore` | upsert + filtered similarity search, per tenant | pgvector · inmemory |
+| `VectorStore` | upsert · filtered similarity search · content-hash diff (`chunk_ids`/`delete`) for incremental re-index, per tenant | pgvector · inmemory |
 | `Reranker` | re-order candidates by query relevance | voyage-rerank · cross-encoder · noop |
 | `Chunker` | document → structure-aware chunks | structural (page/section) · fixed-window |
 | `DocumentSource` | fetch + extract raw documents (freshness) | pdf · sec-edgar · web · s3 |
@@ -72,8 +72,10 @@ flowchart TB
 
 ## 5. The two pipelines (`core/pipeline.py`)
 
-**`ingest(source, tenant)`** — `DocumentSource.fetch → extract → Chunker.chunk → EmbeddingProvider.embed
-→ VectorStore.upsert`, recording metadata + a freshness timestamp.
+**`ingest(source, tenant)`** — `DocumentSource.fetch → extract → Chunker.chunk → diff → EmbeddingProvider.embed
+→ VectorStore.upsert [→ prune]`, recording metadata + a freshness timestamp. The diff is on the content-hash
+ID (ADR-0011): only changed chunks are embedded, and `prune=True` deletes chunks the source dropped, so
+re-index is incremental and leaves no stale content (ADR-0023).
 
 **`answer(query, tenant, user)`** — grounding, relevance, and memory are first-class:
 

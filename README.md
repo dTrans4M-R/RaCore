@@ -44,8 +44,8 @@ here, never in a consumer repo. See [`CLAUDE.md`](CLAUDE.md) for the house rules
 
 ## Status
 
-**Phase 0 — Foundation: the walking skeleton is live**, **Phase 1 — Grounding is in**, and **Phase 2
-— Relevance & refusal has begun.** A thin end-to-end slice runs through the real ports at **$0**
+**Phase 0 — Foundation: the walking skeleton is live**, **Phase 1 — Grounding is in**, **Phase 2 —
+Relevance & refusal is in**, and **Phase 3 — Freshness has begun.** A thin end-to-end slice runs through the real ports at **$0**
 external spend — ingest → retrieve → rerank → ground → cite → answer — with per-stage timing
 (ADR-0010) and content-hash IDs (ADR-0011), plus an eval harness that prints a baseline over a golden
 set.
@@ -74,7 +74,14 @@ no gate and the gap stays *surfaced* rather than faked. The opt-in **LLM gate** 
 closes it by judging relevance on *meaning*: on a real run it lifts refusal accuracy **0.824 → 1.000**
 with answer correctness held at 0.857 — even on the lexical embedder, where no score threshold can. A
 **cascade** runs that paid gate only in the uncertain gray zone, so the confident cases stay free
-(ADR-0021). Build order and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
+(ADR-0021).
+
+**Phase 3 — Freshness** is now underway. `ingest()` re-indexes **incrementally** by diffing the source
+against the store on the content-hash ID (ADR-0023): unchanged chunks are skipped (a re-ingest of an
+unchanged corpus embeds *nothing*), changed chunks are re-embedded, and `prune=True` deletes chunks the
+source dropped — so an edited or removed document leaves no stale content searchable. `IngestReport` now
+reports `added / unchanged / deleted` so the incremental behaviour is measured, not assumed. Build order
+and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
 

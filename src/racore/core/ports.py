@@ -46,7 +46,14 @@ class EmbeddingProvider(Protocol):
 
 
 class VectorStore(Protocol):
-    """Upsert embedded chunks and run filtered similarity search, namespaced per tenant."""
+    """Upsert embedded chunks and run filtered similarity search, namespaced per tenant.
+
+    ``chunk_ids`` and ``delete`` make **incremental re-index** a first-class operation
+    (ADR-0023): the pipeline reads what is already stored, embeds only chunks whose content
+    hash is new, and (when pruning) deletes chunks that no longer appear in the source. Because
+    IDs are content hashes (ADR-0011), this diff is exact — unchanged content keeps its ID and
+    is skipped, changed content mints a new ID and replaces the old.
+    """
 
     async def upsert(self, items: list[EmbeddedChunk], tenant_id: str) -> None: ...
 
@@ -57,6 +64,14 @@ class VectorStore(Protocol):
         tenant_id: str,
         filters: Mapping[str, str] | None = None,
     ) -> list[Retrieval]: ...
+
+    async def chunk_ids(self, tenant_id: str) -> set[str]:
+        """All chunk IDs currently stored for ``tenant_id`` (empty when the tenant is unknown)."""
+        ...
+
+    async def delete(self, chunk_ids: list[str], tenant_id: str) -> None:
+        """Remove the given chunk IDs from ``tenant_id``. IDs not present are ignored."""
+        ...
 
 
 class Reranker(Protocol):
