@@ -3,7 +3,7 @@
 The chat-completions protocol this speaks is the lingua franca of local model runtimes: Ollama,
 vLLM, LM Studio and llama.cpp all expose it, and so does the hosted OpenAI API. So a single
 adapter reaches a **local ($0)** model or a **paid** hosted one with no code change — only
-``base_url`` (and, for hosted, ``api_key``) differ. That is the cheap middle tier between the
+``base_url`` (and, for hosted, the API key) differ. That is the cheap middle tier between the
 deterministic ``ThresholdRelevanceGate`` (no model) and a frontier gate like Claude: a free,
 private, semantic gate you self-host.
 
@@ -17,6 +17,7 @@ imported lazily, so the core install stays dependency-free (ADR-0007, ADR-0022).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -31,14 +32,17 @@ class OpenAIConfig:
     """Tunables for the OpenAI-compatible adapter.
 
     Defaults target a **local** Ollama endpoint so the $0 path works out of the box once a model
-    is pulled (``ollama pull llama3.2``). Point ``base_url`` at vLLM/LM Studio, or at
-    ``https://api.openai.com/v1`` with a real ``api_key`` and an OpenAI ``model`` (e.g.
-    ``gpt-4o-mini``), to use the same adapter against the hosted API.
+    is pulled (``ollama pull qwen2.5:7b``). Point ``base_url`` at vLLM/LM Studio, or at
+    ``https://api.openai.com/v1`` with an OpenAI ``model`` (e.g. ``gpt-4o-mini``), to use the same
+    adapter against the hosted API. For hosted, leave ``api_key=None`` to read ``OPENAI_API_KEY``
+    from the environment (like the Anthropic adapter — e.g. ``uv run --env-file .env``), or set it
+    explicitly; a local server needs no key at all.
     """
 
     # A pinned local default, overridable per run with `--model`. Even a small instruct model
-    # (1-3B) is enough for the gate's one-word ANSWER/ABSTAIN verdict.
-    model: str = "llama3.2"
+    # (1-3B) answers the gate's one-word ANSWER/ABSTAIN verdict, but a weak model judges it poorly
+    # (ADR-0022) — a 7-8B model is the sweet spot.
+    model: str = "qwen2.5:7b"
     max_tokens: int = 1024
     temperature: float = 0.0  # deterministic-as-possible for reproducible eval runs.
     timeout_s: float = 30.0
@@ -65,6 +69,20 @@ class _Client(Protocol):
     def chat(self) -> _Chat: ...
 
 
+def _resolve_api_key(config: OpenAIConfig) -> str:
+    """Resolve the API key in priority order, so "paid <-> local" is genuinely a one-flag change:
+
+    1. an explicit ``config.api_key`` wins;
+    2. else ``OPENAI_API_KEY`` from the environment — the hosted path (``uv run --env-file .env``);
+    3. else a harmless placeholder, so the SDK can still build against a **local** server that
+       ignores the key entirely.
+
+    The placeholder must be the *last* resort, not the default: injecting it unconditionally would
+    shadow a real key in the environment and 401 the hosted API (the bug this replaces).
+    """
+    return config.api_key or os.environ.get("OPENAI_API_KEY") or "not-needed"
+
+
 def _build_client(config: OpenAIConfig) -> _Client:
     try:
         from openai import AsyncOpenAI
@@ -74,13 +92,9 @@ def _build_client(config: OpenAIConfig) -> _Client:
             "pip install 'racore[openai]' (or `uv add openai`)."
         ) from exc
 
-    kwargs: dict[str, Any] = {"timeout": config.timeout_s}
+    kwargs: dict[str, Any] = {"timeout": config.timeout_s, "api_key": _resolve_api_key(config)}
     if config.base_url is not None:
         kwargs["base_url"] = config.base_url
-    # Local servers (Ollama, vLLM, LM Studio) ignore the key, but the SDK refuses to build without
-    # a non-empty one; a harmless placeholder keeps the local path zero-config. For the hosted API,
-    # set `api_key` in the config.
-    kwargs["api_key"] = config.api_key if config.api_key is not None else "not-needed"
     # The real client satisfies ``_Client`` (it has ``chat.completions.create``); cast past mypy's
     # strictness about the exact SDK signature vs our permissive protocol. Keeps the gate green
     # whether or not the optional extra is installed.

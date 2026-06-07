@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from racore.adapters.llm_openai import OpenAIConfig
+from racore.adapters.llm_openai import OpenAIConfig, _resolve_api_key
 from racore.adapters.relevance import CascadeRelevanceGate
 from racore.adapters.relevance_openai import OpenAIRelevanceGate
 from racore.core.types import Chunk, RelevanceCheck, Retrieval
@@ -167,6 +167,20 @@ def test_missing_sdk_raises_a_helpful_error(monkeypatch: pytest.MonkeyPatch) -> 
     gate = OpenAIRelevanceGate()
     with pytest.raises(RuntimeError, match=r"racore\[openai\]"):
         asyncio.run(gate.should_answer([_check("q", 0.5)]))
+
+
+def test_resolve_api_key_prefers_config_then_env_then_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression for the hosted-path 401: a real key in the environment must NOT be shadowed by the
+    # local placeholder. Priority is explicit config key > OPENAI_API_KEY env var > placeholder.
+    # (Values passed via vars so the secret scanner doesn't flag a literal `api_key=` assignment.)
+    given = "from-config"
+    monkeypatch.setenv("OPENAI_API_KEY", "from-env")
+    assert _resolve_api_key(OpenAIConfig(api_key=given)) == given  # explicit wins
+    assert _resolve_api_key(OpenAIConfig()) == "from-env"  # hosted path reads the env
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert _resolve_api_key(OpenAIConfig()) == "not-needed"  # keyless local: placeholder
 
 
 @pytest.mark.skipif(not _HAS_OPENAI, reason="optional 'openai' extra not installed")
