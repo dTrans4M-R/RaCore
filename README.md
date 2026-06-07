@@ -74,7 +74,7 @@ of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 - [`docs/evaluation.md`](docs/evaluation.md) — the measurement strategy (the differentiator).
 - [`docs/latency.md`](docs/latency.md) — latency & streaming: replying promptly without awkward pauses.
 - [`docs/memory.md`](docs/memory.md) — the per-user persistent memory subsystem.
-- [`docs/roadmap.md`](docs/roadmap.md) — the phased build plan + the public learning-doc outline.
+- [`docs/roadmap.md`](docs/roadmap.md) — the phased build plan and per-phase definition of done.
 - [`docs/decisions.md`](docs/decisions.md) — the architecture decision log (why each choice was made).
 
 ## Getting started (for the builder)
