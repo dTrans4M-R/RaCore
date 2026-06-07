@@ -11,8 +11,9 @@
    **adapter**. Customization = swapping/configuring adapters, never forking the core.
 2. **Eval-first.** The evaluation module is wired on day one, not bolted on. If you can't measure a
    change, you don't ship it. → [`evaluation.md`](evaluation.md)
-3. **Config-as-customization.** A typed (pydantic) config schema is the client-facing surface. A client
-   need that can't be expressed as config or a plugin is a signal to add a new **port**, not a fork.
+3. **Config-as-customization.** A typed (pydantic) config schema is the *planned* client-facing surface
+   (today the wiring is direct constructor calls + frozen-dataclass request types). A client need that
+   can't be expressed as config or a plugin is a signal to add a new **port**, not a fork.
 4. **Grounding and memory are pipeline stages, not add-ons.** They sit in the main `answer()` path.
 
 ## 2. Component view
@@ -64,7 +65,7 @@ flowchart TB
 | `Reranker` | re-order candidates by query relevance | voyage-rerank · cross-encoder · noop |
 | `Chunker` | document → structure-aware chunks | structural (page/section) · fixed-window |
 | `DocumentSource` | fetch + extract raw documents, with a freshness timestamp | filesystem · inmemory · pdf · sec-edgar · web · s3 |
-| `MemoryStore` | per-user read/write/compaction | pg-memory · file-memory |
+| `MemoryStore` | per-user read/write (compaction planned) | pg-memory · file-memory |
 | `MemoryExtractor` | turn → durable per-user memories (the write policy) | rule-based ($0) · llm |
 | `LLMProvider` | grounded generation (streaming) | anthropic · openai |
 | `EntailmentJudge` | per-claim: does cited evidence support it? | substring · token-overlap · llm-judge |
@@ -91,9 +92,9 @@ including abstain (ADR-0026):
 ```mermaid
 flowchart LR
     Q["query"] --> M["memory.read<br/>(personalize)"]
-    M --> U["understand<br/>rewrite / expand"]
-    U --> H["hybrid retrieve<br/>(dense + sparse)"]
-    H --> R["rerank<br/>(relevance)"]
+    M --> U["understand<br/>(query seam — rewrite/expand later)"]
+    U --> H["retrieve<br/>(dense vector; hybrid planned)"]
+    H --> R["rerank<br/>(relevance; noop by default)"]
     R --> G["relevance gate<br/>(answer? / abstain)"]
     G --> A["grounding.assemble<br/>(attach evidence + citations)"]
     A --> L["llm.generate<br/>(answer w/ inline [n], stream)"]

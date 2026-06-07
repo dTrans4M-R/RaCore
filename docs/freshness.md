@@ -39,7 +39,7 @@ Freshness has two halves, kept apart on purpose:
   content-hash ID**, so re-stamping identical content never changes identity or forces a re-embed.
 - **The judgment** — staleness. The pure helpers in `core/freshness.py` (`age_seconds`, `stalest_age`,
   `stale`) each take `now` as an **explicit argument**. Nothing reads the wall clock, so a chunk's age is a
-  fixed fact and the eval harness scores the same today and next year (the determinism rule, ADR-0010).
+  fixed fact and the eval harness scores the same today and next year (the fact-vs-judgment split, ADR-0024).
 
 An *unset* timestamp (`0.0`) means "age unknown" and is treated as **not stale** — absence of a date is not
 evidence of staleness. The harness `run(now=…)` surfaces the stalest evidence age per case in `-v`; with
