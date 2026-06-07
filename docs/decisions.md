@@ -669,3 +669,35 @@ saturated 1.0.
 explicit fact extracted and answered (cited to `memory/`), **none** of the implicit facts extracted; the
 memory-off control stays 0.000. That 0.625 is the honest ceiling the LLM extractor is measured against
 (ADR-0030). Gate green: **107 passed**.
+
+### ADR-0030 — Opt-in LLM memory extractor: paid recovers the implicit recall (Phase 4, slice 3b-ii)
+
+**Context.** ADR-0029 measured the $0 rule floor's extraction-recall ceiling at **0.625**: it catches every
+explicit self-statement and **none** of the implicit facts. ADR-0026 left `MemoryExtractor` pluggable for
+exactly this — the floor is the $0 default, and a model-backed extractor is the "paid only improves" lever.
+
+**Decision.** Ship `AnthropicMemoryExtractor` behind the `MemoryExtractor` port. It asks Claude to return a
+JSON array of durable facts (`kind` / `content` / `key`) from a turn, parses it tolerantly (prose or
+malformed output → no memories), and stamps each with a content-hash ID, the turn's provenance, and a
+salience that clears the floor. It mirrors `AnthropicLLM`/`AnthropicEntailmentJudge` and reuses their
+plumbing: optional extra (`racore[anthropic]`), lazy SDK, a narrow injected client `Protocol` (so the
+parse/provenance/cost/skip contracts are tested **offline**), and a `UsageReporter`. Like the rule floor it
+**skips questions** (a `?`-terminated turn states nothing durable) — which also means it makes no paid call,
+and never pollutes memory, on a probe. CLI: `--memory-extractor {rule,llm}` (default `rule`, $0).
+
+**Measured (real Claude run, `claude-haiku-4-5`, `--memory --memory-extractor llm`).** Extraction recall
+**0.625 → 1.000** and personalization lift **+0.625 → +1.000**: the three implicit facts the rule floor
+missed are recovered — "We usually sync on Tuesday mornings" → *usually syncs on Tuesday mornings*, "I had
+to give up gluten" → *avoids gluten*, "Python is the only language I'm comfortable writing" → *only
+comfortable writing in Python* — each then answering its probe, cited to a `memory/` source. The explicit
+facts are unchanged (paid does not regress them) and the memory-off control stays **0.000**. Offline tests
+(`tests/test_memory_extract_llm.py`) gate the JSON parse, provenance, usage reporting, and question-skip.
+Gate green (offline, $0): **110 passed**.
+
+**The thesis, concretely:** `$0` buys the explicit-fact floor — the common case, at zero cost and zero
+latency — and paid spend *only widens* recall to implicit facts; it never enables the capability or
+regresses the floor. **Honest caveats:** (1) the eval questions reuse a word from each fact so a memory the
+model phrases naturally still clears the overlap-gated injection; a semantic memory embedder (not the
+lexical $0 one) would remove that constraint — a future refinement. (2) The extractor reports usage, but the
+memory harness does not yet aggregate cost/turn the way the corpus harness does (small follow-up). (3) The
+recency-weighted ranking deferred from slice 2 is still open (3b's remaining piece).

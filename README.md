@@ -97,10 +97,14 @@ overlap-gated `memory/` evidence — the **same grounded channel as the corpus**
 model can use them yet grounding still verifies them (a remembered fact is never invented). New facts in a
 known slot **supersede** the old rather than contradicting it, keeping provenance for audit (ADR-0027). The
 headline is measured first-class (`--memory`, ADR-0028): on the `$0` stack, questions answerable only from
-a stated fact go from unanswerable to correct — **personalization lift +1.000**, stored-fact recall 1.000 —
-while the corpus baseline is byte-identical (memory is off without a `user_id`). With that, **Phase 4's
-definition of done is met**: per-user personalization works and fact-recall + lift are measured (see
-[`docs/memory.md`](docs/memory.md)).
+a stated fact go from unanswerable to correct, while the corpus baseline is byte-identical (memory is off
+without a `user_id`). True to form, the eval is honest about the floor's ceiling (ADR-0029): the `$0`
+rule extractor catches every *explicit* self-statement but misses *implicit* facts ("we usually sync on
+Tuesdays"), so it reads **extraction recall 0.625 / lift +0.625** — not a misleading 1.0. The opt-in
+**LLM extractor** behind the same port is the "paid only improves" lever (ADR-0030): on a real run it
+recovers the implicit facts to **recall 1.000 / lift +1.000**, without regressing the explicit ones. With
+that, **Phase 4's definition of done is met**: per-user personalization works and fact-recall + lift are
+measured (see [`docs/memory.md`](docs/memory.md)).
 
 Build order and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 

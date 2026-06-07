@@ -152,16 +152,27 @@ async def _run(
     return await run(pipeline, golden_dataset(), default_evaluators())
 
 
-def _run_memory(*, verbose: bool) -> None:
-    """Run the memory personalization-lift eval over a throwaway file-backed store."""
+def _run_memory(*, extractor_kind: str, model: str | None, verbose: bool) -> None:
+    """Run the memory personalization-lift eval over a throwaway file-backed store.
+
+    ``extractor_kind='rule'`` is the $0 floor; 'llm' is the opt-in Anthropic extractor (lazy SDK)
+    that recovers the implicit facts the rule floor misses — the "paid only improves" lever."""
     import tempfile
     from pathlib import Path
 
     from racore.eval.memory import memory_demo_pipeline, run_memory_lift
 
+    extractor = None
+    if extractor_kind == "llm":
+        from racore.adapters.llm_anthropic import AnthropicConfig
+        from racore.adapters.memory_extract_anthropic import AnthropicMemoryExtractor
+
+        config = AnthropicConfig(model=model) if model else AnthropicConfig()
+        extractor = AnthropicMemoryExtractor(config)
+
     with tempfile.TemporaryDirectory() as base_dir:
-        report = asyncio.run(run_memory_lift(memory_demo_pipeline(Path(base_dir))))
-    print("# memory personalization lift  (embedder=mock  llm=mock  extractor=rule-based)")
+        report = asyncio.run(run_memory_lift(memory_demo_pipeline(Path(base_dir), extractor)))
+    print(f"# memory personalization lift  (embedder=mock  llm=mock  extractor={extractor_kind})")
     print(report.render(verbose=verbose))
 
 
@@ -249,6 +260,13 @@ def main() -> None:
         "baseline: correctness with memory on vs off, on questions only a stated fact can answer.",
     )
     parser.add_argument(
+        "--memory-extractor",
+        choices=["rule", "llm"],
+        default="rule",
+        help="write policy for --memory: 'rule' ($0, explicit self-statements, default) or 'llm' "
+        "(opt-in Claude, recovers implicit facts the rule floor misses — the paid-improves lever).",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -257,7 +275,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.memory:
-        _run_memory(verbose=args.verbose)
+        _run_memory(extractor_kind=args.memory_extractor, model=args.model, verbose=args.verbose)
         return
 
     report = asyncio.run(

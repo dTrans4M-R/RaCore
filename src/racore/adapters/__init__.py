@@ -21,6 +21,7 @@ from racore.adapters.llm_anthropic import AnthropicConfig, AnthropicLLM
 from racore.adapters.llm_openai import OpenAIConfig
 from racore.adapters.memory import FileMemoryStore
 from racore.adapters.memory_extract import RuleBasedMemoryExtractor
+from racore.adapters.memory_extract_anthropic import AnthropicMemoryExtractor
 from racore.adapters.relevance import CascadeRelevanceGate, ThresholdRelevanceGate
 from racore.adapters.relevance_anthropic import AnthropicRelevanceGate
 from racore.adapters.relevance_openai import OpenAIRelevanceGate
@@ -32,6 +33,7 @@ __all__ = [
     "AnthropicConfig",
     "AnthropicEntailmentJudge",
     "AnthropicLLM",
+    "AnthropicMemoryExtractor",
     "AnthropicRelevanceGate",
     "CascadeRelevanceGate",
     "ExtractiveLLM",
