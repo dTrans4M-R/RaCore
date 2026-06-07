@@ -401,3 +401,28 @@ The remaining open issue is **latency** (~7 s/query), not quality — to be addr
 score bands carry the confident cases; the slow LLM runs only the gray zone). To make those bands
 tunable, the harness `-v` output now prints the per-case **top retrieval score** (`top=`): a threshold
 can't be calibrated blind.
+
+**Calibrated cascade on Voyage (2026-06-07) — the synthesis: faster AND better AND cheaper than the pure
+LLM gate.** The per-case `top=` scores confirmed ADR-0021's trap in the data: n2/n3 (0.443/0.488) sit
+below every answerable, but **n1 "rings on Neptune" (0.526) outscores the lowest legitimate answerable p5
+(0.514)** — so no single floor separates them. The cascade's two bands do: **low 0.50** free-abstains the
+clear negatives, **high 0.60** free-*answers* the confident rows (every negative is ≤ 0.526, well below),
+and only the thin gray zone [0.50, 0.60) — p5, n1, p1, p2 — reaches the LLM. With local `qwen2.5:7b` in
+that gray zone: **refusal 0.941, answer 0.929, fabrication 0.0, p50 latency 0.41 s (from ~9 s), 4 LLM calls
+instead of 17, ~50 tokens/answer.** Two findings worth keeping:
+- **The cascade beats the pure LLM gate on quality, not just speed** (0.941 vs 0.882). The high band
+  free-answered **q6** — a verbatim "Titan is the largest moon of Saturn" that qwen *itself* had wrongly
+  refused. For a high-confidence retrieval the *score* is a better judge than a mid-size LLM, which
+  over-thinks; the LLM earns its keep only in the ambiguous middle. That is the cascade's deep
+  justification, now measured.
+- **The one residual is p1** (0.592, gray zone, qwen refuses); pushing `--gate-high` to 0.55 would free it
+  (→ ~1.000) but narrows the margin over n1 (0.526) to 0.024. That margin — and the high band's safety
+  generally — rests on **just three negatives**, so the calibration is **corpus-specific and must be
+  re-validated on a larger/harder negative set** before trusting the high band in production (ADR-0021's
+  off-by-default stance stands for the general case). The un-forced **0.941** is the honest number.
+
+This closes the Phase-2 gate as designed: a free deterministic floor + a free high band carry the
+confident majority at interactive speed and `$0`, and a smart-but-slow LLM is reserved for the ambiguous
+minority — fast, cheap, safe, and good. Paid models (a stronger gray-zone judge) or a local embedder are
+the only remaining levers to reach 1.000, which is exactly "the `$0` stack is best-positioned, paid only
+improves."
