@@ -9,6 +9,7 @@ re-architecture (``docs/latency.md`` §6).
 
 from __future__ import annotations
 
+from racore.service.asgi import ASGIApplication, create_app
 from racore.service.core import RaCoreService, ServiceError, demo_service
 from racore.service.types import (
     AnswerRequest,
@@ -19,6 +20,7 @@ from racore.service.types import (
 )
 
 __all__ = [
+    "ASGIApplication",
     "AnswerRequest",
     "DocumentInput",
     "IngestRequest",
@@ -26,5 +28,6 @@ __all__ = [
     "MemoryWriteRequest",
     "RaCoreService",
     "ServiceError",
+    "create_app",
     "demo_service",
 ]
