@@ -294,6 +294,26 @@ class IngestReport:
         return sum(t.millis for t in self.timings)
 
 
+# --- caching ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CacheKey:
+    """The identity of a cacheable answer: a tenant, its normalized question, and any filters.
+
+    Frozen and hashable so it can key a cache map directly. ``query`` is the *normalized* text
+    (lowercased, whitespace-collapsed) so trivially-different phrasings of the same exact ask
+    collapse to one entry — the always-safe exact-match tier (ADR-0020 §5a). ``tenant_id`` is part
+    of the key, so a cache hit can never cross the isolation boundary. The grounding gate that
+    decides whether an entry is *still valid* is separate (see ``AnswerCache``); the key only says
+    *which* entry a question maps to.
+    """
+
+    tenant_id: str
+    query: str
+    filters: tuple[tuple[str, str], ...] = ()
+
+
 # --- memory -----------------------------------------------------------------------
 
 

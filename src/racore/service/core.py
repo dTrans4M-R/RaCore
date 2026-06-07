@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from racore.adapters.cache import GroundingGatedCache
 from racore.adapters.chunkers import FixedWindowChunker
 from racore.adapters.embeddings import MockEmbeddingProvider
 from racore.adapters.judges import SubstringEntailmentJudge
@@ -117,8 +118,9 @@ def demo_service(memory_dir: Path) -> RaCoreService:
 
     Deterministic and zero-spend (ADR-0007): the mock embedder, in-memory store, extractive LLM,
     strict substring judge, plus a file-backed memory store and the rule-based extractor so the
-    memory endpoints work out of the box. Swapping in real providers (Voyage, Claude, pgvector) is
-    a constructor change behind the same ports — never a fork of this facade."""
+    memory endpoints work out of the box, and the grounding-gated answer cache so repeat asks are
+    fast and stay correct (ADR-0031). Swapping in real providers (Voyage, Claude, pgvector) is a
+    constructor change behind the same ports — never a fork of this facade."""
     pipeline = Pipeline(
         embedder=MockEmbeddingProvider(),
         store=InMemoryVectorStore(),
@@ -128,5 +130,6 @@ def demo_service(memory_dir: Path) -> RaCoreService:
         judge=SubstringEntailmentJudge(),
         memory=FileMemoryStore(memory_dir),
         extractor=RuleBasedMemoryExtractor(),
+        cache=GroundingGatedCache(),
     )
     return RaCoreService(pipeline=pipeline)

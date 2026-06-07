@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from racore.core import grounding
@@ -27,6 +27,7 @@ from racore.core.ids import content_id
 from racore.core.ports import UsageReporter
 from racore.core.types import (
     Answer,
+    CacheKey,
     Chunk,
     EmbeddedChunk,
     GroundingReport,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from racore.core.ports import (
+        AnswerCache,
         Chunker,
         DocumentSource,
         EmbeddingProvider,
@@ -108,6 +110,10 @@ class Pipeline:
     ``gate`` is optional: when present it decides — after rerank, before generate — whether
     the retrieved evidence warrants an answer, and an abstain short-circuits generation
     (ADR-0021). When absent the pipeline answers whenever any context survives rerank.
+    ``cache`` is optional: when present, a repeat ask whose grounding is still intact is served
+    without re-running the expensive generate path (the latency lever, ADR-0020/0031). Only
+    corpus-scoped answers are cached — a query carrying a ``user_id`` depends on per-user memory
+    and bypasses the shared cache.
     """
 
     embedder: EmbeddingProvider
@@ -120,6 +126,7 @@ class Pipeline:
     extractor: MemoryExtractor | None = None
     drop_unsupported: bool = False
     gate: RelevanceGate | None = None
+    cache: AnswerCache | None = None
 
     async def ingest(
         self, source: DocumentSource, tenant_id: str = "default", *, prune: bool = False
@@ -183,6 +190,21 @@ class Pipeline:
         answer (short-circuiting generation)."""
         sw = _Stopwatch()
         use_memory = self.memory is not None and query.user_id is not None
+
+        # Corpus-scoped answers are cacheable; a per-user query depends on memory that the key can't
+        # capture, so it bypasses the shared cache (ADR-0020/0031).
+        cacheable = self.cache is not None and query.user_id is None
+        cache_key: CacheKey | None = None
+        if cacheable:
+            assert self.cache is not None  # narrowed by `cacheable`
+            cache_key = _cache_key(query)
+            with sw.stage("cache"):
+                live_ids = frozenset(await self.store.chunk_ids(query.tenant_id))
+                hit = await self.cache.get(cache_key, live_ids)
+            if hit is not None:
+                # Served without embed/retrieve/generate; re-stamp the timing so the latency win is
+                # what the harness measures, not the original generation's cost.
+                return replace(hit, timings=sw.timings)
 
         memories: list[MemoryItem] = []
         if use_memory:
@@ -265,7 +287,7 @@ class Pipeline:
         # ran and bills), the generator, and the judge.
         generator_usage = [response.usage] if response.usage is not None else []
         usages = (*query_usages, *_drain(self.gate), *generator_usage, *_drain(self.judge))
-        return Answer(
+        answer = Answer(
             text=outcome.text,
             citations=outcome.citations,
             grounding=outcome.report,
@@ -274,6 +296,14 @@ class Pipeline:
             usages=usages,
             abstained=_is_refusal(response.text),
         )
+        if cacheable and cache_key is not None:
+            assert self.cache is not None  # narrowed by `cacheable`
+            # Gate the entry on exactly the chunks the answer *cited*: if any of them later changes
+            # content (new hash) or is removed, the grounding gate evicts it (ADR-0031). An answer
+            # that cited nothing has no grounding to gate on, so `put` declines to store it.
+            grounded_ids = frozenset(c.evidence.chunk_id for c in answer.citations)
+            await self.cache.put(cache_key, answer, grounded_ids)
+        return answer
 
     async def _remember(self, sw: _Stopwatch, query: Query) -> None:
         """Learn durable facts from this turn (the write policy, ADR-0026), on every exit path.
@@ -296,6 +326,16 @@ class Pipeline:
 
 
 # --- stage helpers ----------------------------------------------------------------
+
+
+def _cache_key(query: Query) -> CacheKey:
+    """The exact-match cache identity for a query: tenant + normalized text + sorted filters.
+
+    Normalizing (lowercase, whitespace-collapsed) collapses trivially-different phrasings of the
+    same exact ask onto one entry; the tenant is part of the key so a hit can't cross tenants."""
+    normalized = " ".join(query.text.lower().split())
+    filters = tuple(sorted(query.filters.items()))
+    return CacheKey(tenant_id=query.tenant_id, query=normalized, filters=filters)
 
 
 def _understand(query: Query, memories: list[MemoryItem]) -> str:

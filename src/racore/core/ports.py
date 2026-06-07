@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from racore.core.types import (
+        Answer,
+        CacheKey,
         Chunk,
         ClaimCheck,
         Document,
@@ -153,6 +155,30 @@ class RelevanceGate(Protocol):
     """
 
     async def should_answer(self, checks: list[RelevanceCheck]) -> list[bool]: ...
+
+
+class AnswerCache(Protocol):
+    """Serve a previously-computed answer to skip the expensive generate path on a repeat ask.
+
+    The latency lever (``docs/latency.md`` §5a), made *safe* by gating on grounding rather than on
+    similarity (ADR-0020). An entry is keyed by ``CacheKey`` (tenant + normalized question), so a
+    hit can never cross the tenant boundary. The gate is the second argument to ``get``: the caller
+    passes the chunk IDs *currently* in the store, and the cache returns the entry only if every
+    chunk it was grounded on is still present. Because IDs are content hashes (ADR-0011), "still
+    present" means "byte-identical" — so editing or removing the evidence an answer stood on mints a
+    new ID and **auto-invalidates** the cached answer, while an unrelated ingest leaves it valid.
+    No blunt whole-corpus flush is needed for correctness; ``invalidate`` is the explicit escape
+    hatch (e.g. a config or policy change).
+
+    Batch-free here by design: caching is a per-answer decision on the hot path, not an I/O batch.
+    ``async`` so a shared/remote cache (Redis, a CDN edge) drops in behind the same port.
+    """
+
+    async def get(self, key: CacheKey, live_ids: frozenset[str]) -> Answer | None: ...
+
+    async def put(self, key: CacheKey, answer: Answer, grounded_ids: frozenset[str]) -> None: ...
+
+    async def invalidate(self, tenant_id: str) -> None: ...
 
 
 class Evaluator(Protocol):

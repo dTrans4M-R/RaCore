@@ -11,6 +11,7 @@ dependency-free.
 
 from __future__ import annotations
 
+from racore.adapters.cache import GroundingGatedCache
 from racore.adapters.chunkers import FixedWindowChunker
 from racore.adapters.embeddings import MockEmbeddingProvider
 from racore.adapters.embeddings_voyage import VoyageConfig, VoyageEmbeddingProvider
@@ -40,6 +41,7 @@ __all__ = [
     "FileMemoryStore",
     "FileSystemDocumentSource",
     "FixedWindowChunker",
+    "GroundingGatedCache",
     "InMemoryDocumentSource",
     "InMemoryVectorStore",
     "MockEmbeddingProvider",

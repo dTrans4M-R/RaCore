@@ -701,3 +701,82 @@ model phrases naturally still clears the overlap-gated injection; a semantic mem
 lexical $0 one) would remove that constraint — a future refinement. (2) The extractor reports usage, but the
 memory harness does not yet aggregate cost/turn the way the corpus harness does (small follow-up). (3) The
 recency-weighted ranking deferred from slice 2 is still open (3b's remaining piece).
+
+### ADR-0031 — The productizing surface: a transport-agnostic service facade + a dependency-free ASGI adapter (Phase 5, slices 1–2)
+
+**Context.** Phases 1–4 proved the engine; Phase 5 makes it deployable. The risk at this step is
+letting a transport (HTTP framework, serialization library, server) leak into — and ossify — the
+engine. The pillars (grounding, relevance, freshness, memory, multi-tenancy) are already in the
+core; "productizing" must be *wiring*, not a re-architecture (`docs/latency.md` §6).
+
+**Decision.** Two thin layers under `src/racore/service/`, both honoring the $0/stdlib rule (ADR-0007):
+
+1. **`RaCoreService`** — a transport-agnostic facade over the async `Pipeline` (the sync-to-wire seam
+   ADR-0009 anticipated). It maps small wire-contract request types (`service/types.py`, exposing
+   only what a caller provides — never an internal content-hash ID) onto the core objects, drives the
+   pipeline, and returns the rich core results unchanged. It holds **no** retrieval/grounding/memory
+   logic: all of that stays in `racore.core`. Multi-tenancy is *not added here* — it is the
+   `tenant_id` the vector store and memory already namespace on; the facade only refuses to let a
+   request cross that boundary, and fails closed (`ServiceError` with a machine-readable `code`) when
+   a memory op is asked of a pipeline without a store/extractor. The same facade backs every caller.
+2. **A hand-rolled ASGI app** (`service/asgi.py`) — **no web framework.** Routes: `GET /health`,
+   `POST /ingest`, `POST /answer` (Server-Sent Events), `GET`/`POST /memory`. Because it is just an
+   async callable, any ASGI server runs it (`uvicorn racore.service.asgi:app`-style) and **tests
+   drive it through the raw protocol with fake `receive`/`send`** — no socket, no client library —
+   the same injected-fake pattern as every provider adapter. The answer route streams `token` events
+   for a fast time-to-first-token, then one `done` event carrying citations + grounding a beat later:
+   the ADR-0020 "text flows, trust badges fill in" shape, realized by the streamable `Answer`.
+
+**Why hand-rolled, not Starlette/FastAPI.** A 4-route surface does not justify a framework + its
+transitive deps, and a zero-dependency app is itself the **open-core line in microcosm**: the engine
+is pure and embeddable, the managed operation (a tuned server, autoscaling, auth) is the paid part.
+The server is a *deploy choice*, never a package dependency — exactly how provider SDKs are opt-in
+extras.
+
+**Result.** Tests prove corpus isolation across tenants and memory isolation across users *through
+the HTTP round-trip*, the SSE framing (token stream reconstructs the answer; `done` carries the
+grounding), and the fail-closed guards. Gate green: **123 passed**. **Honest caveats:** no auth /
+rate-limiting / request-size limits yet (an edge/gateway concern, deliberately out of the engine);
+no runnable server entrypoint is shipped (BYO ASGI server, by design); content negotiation is
+minimal (JSON in, JSON/SSE out).
+
+### ADR-0032 — Grounding-gated answer caching via content-hash IDs (Phase 5, slice 3)
+
+**Context.** Caching is the biggest perceived-latency lever and the most dangerous one: a cache that
+serves a *similar* question's answer can be confidently wrong (`docs/latency.md` §5a — negation,
+specificity, scope traps). ADR-0020 set the principle: **gate the cache by whether the answer still
+holds, not by how similar a query looks.** Phase 5 needs the always-safe tier built and measured.
+
+**Decision.** A `Cache`-shaped port `AnswerCache` (get / put / invalidate) and a `GroundingGatedCache`
+adapter, wired as an optional `Pipeline.cache`. The design rides the content-hash IDs (ADR-0011) to
+make correctness **structural, not a tuning knob**:
+
+- **Key** = `(tenant_id, normalized_query, sorted_filters)` — the exact-match tier (always-safe),
+  tenant-scoped so a hit can never cross the isolation boundary.
+- **Gate** = each entry stores the set of chunk IDs the answer was **grounded on** (the chunks it
+  cited). On lookup the pipeline passes the IDs *currently* in the store; the entry is served only if
+  every grounding chunk is still present. Because IDs are content hashes, "still present" is
+  byte-exact: **edit or remove the evidence an answer stood on → its hash changes → the cached answer
+  auto-invalidates**; an unrelated ingest touches none of those chunks, so the entry stays valid. No
+  blunt per-tenant flush is needed for correctness; `invalidate` is the explicit escape hatch.
+- **Never cached:** an abstain (it would wrongly replay "I don't know" after the corpus gains the
+  answer) or an answer with no citations (nothing to gate on). **Bypassed:** any query carrying a
+  `user_id` — a personalized answer depends on per-user memory the key can't capture, so it must
+  never land in the shared cache where another user could be served it.
+
+**Result (measured, $0 deterministic stack).** A repeat ask is served from cache executing a single
+`cache` stage instead of the full pipeline — **skipping `generate`**, the ~1.2 s stage that dominates
+a real-model run (`docs/latency.md` §2). The gate is proven both ways: editing the grounding evidence
+(re-ingest + prune) forces a regenerate to the corrected answer, while adding an unrelated document
+keeps the entry valid and fast; the cache is tenant-isolated; an abstain is not cached; a personalized
+answer never leaks across users. Gate green: **129 passed**.
+
+**Honest caveats / deferred.** (1) The **semantic** answer tier — selecting a candidate by embedding
+similarity, then re-validating it by grounding — is *not* built: on the lexical $0 embedder its
+similarity threshold can't be measured meaningfully (cf. ADR-0021), so it waits for a semantic
+embedder, exactly as the reranker and recency ranking were deferred until a corpus could measure them.
+The grounding gate built here is the safety mechanism that tier will reuse. (2) A newly-added,
+more-authoritative document does **not** invalidate a still-grounded cached answer (its own evidence
+is unchanged) — correct under the grounding definition, but for high-stakes corpora the conservative
+config is `invalidate(tenant)` on every ingest. (3) `live_ids` reads the tenant's full chunk-ID set;
+a production store would expose a cheaper "contains these IDs" check.
