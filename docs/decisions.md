@@ -232,3 +232,21 @@ does **not** relax the metric — an uncited claim is still unsupported (`test_g
 Prompt effects are non-deterministic, so validation is **empirical** (the eval harness on a real
 model), not a unit test; the deterministic gate is unaffected because the `$0`/mock generators ignore
 the system prompt.
+
+### ADR-0020 — Streaming is additive; grounding decorates a concurrent stream
+**Context:** modern RAG is judged on responsiveness — the answer must start promptly and flow, not
+arrive after a buffered pause. Measured latency (~2.2 s full stack) is **~99 % provider round-trips**
+(generate ~1.2 s, LLM judge ~0.75 s, embedder ~0.35 s); RaCore's own overhead is ~10 ms. ADR-0009
+already froze a streamable `Answer` type + async ports so streaming is *additive*; the open question is
+how streaming coexists with grounding, which verifies the **whole** answer (`generate → verify`).
+**Decision:** (a) real token streaming is a **new additive path** — a streaming LLM adapter behind
+`LLMProvider` feeds `Answer.stream()` real deltas; the batch `generate()` stays for eval/batch, with no
+change to existing signatures or the core. (b) **Grounding decorates the stream:** stream the text
+immediately for a fast time-to-first-token, run `verify` concurrently, and let citations/grounding
+resolve a beat later (flag mode). Deterministic judges are ~0.1 ms (free in-path); the **opt-in** LLM
+judge (~0.75 s) runs async / on-demand, off the blocking path. (c) `drop_unsupported` buffers (you
+cannot stream text you may delete) — the documented exception. (d) Latency stays **gated** (ADR-0010).
+**Consequences:** time-to-first-token drops to ~hundreds of ms — the perceived-latency win — with no
+core rebuild; grounding stays first-class without blocking the stream; the engine stays
+provider-agnostic (a local/cached embedder and the streaming adapter are drop-ins). Productionizing
+this is **Phase 5**; the foundation is load-bearing now. Full analysis in [`latency.md`](latency.md).
