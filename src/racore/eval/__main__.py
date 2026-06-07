@@ -48,7 +48,7 @@ def _make_gate(
     model: str | None,
     min_score: float,
     margin: float,
-    high: float,
+    high: float | None,
 ) -> RelevanceGate | None:
     """Build the selected relevance gate. 'none' (default) leaves the pipeline ungated;
     'llm'/'cascade' are opt-in and lazily import the SDK."""
@@ -76,7 +76,7 @@ def _build_pipeline(
     gate_kind: str = "none",
     gate_min_score: float = 0.0,
     gate_margin: float = 0.0,
-    gate_high: float = 1.0,
+    gate_high: float | None = None,
 ) -> Pipeline:
     """Start from the $0 stack and swap only the embedder/LLM/judge/gate that were selected."""
     pipeline = dataclasses.replace(demo_pipeline(), judge=_make_judge(judge_kind, model))
@@ -106,7 +106,7 @@ async def _run(
     gate_kind: str = "none",
     gate_min_score: float = 0.0,
     gate_margin: float = 0.0,
-    gate_high: float = 1.0,
+    gate_high: float | None = None,
 ) -> HarnessReport:
     pipeline = _build_pipeline(
         llm_kind,
@@ -181,8 +181,10 @@ def main() -> None:
     parser.add_argument(
         "--gate-high",
         type=float,
-        default=1.0,
-        help="cascade gray-zone upper bound: a top score >= this answers without a paid call.",
+        default=None,
+        help="cascade free-answer band (opt-in, off by default): a top score >= this answers "
+        "WITHOUT the paid gate. Risky — a high score can be a semantic false positive; calibrate "
+        "before use.",
     )
     parser.add_argument(
         "-v",
@@ -215,7 +217,7 @@ def main() -> None:
     if args.gate == "threshold" and args.gate_margin:
         header += f"  gate_margin={args.gate_margin}"
     if args.gate == "cascade":
-        header += f"  gate_high={args.gate_high}"
+        header += f"  gate_high={args.gate_high if args.gate_high is not None else 'off'}"
     print(header)
     print(report.render(verbose=args.verbose))
 

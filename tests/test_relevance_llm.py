@@ -210,6 +210,23 @@ async def _cascade_gray_zone() -> None:
     assert [c.query for c in fallback.seen] == ["gray"]
 
 
+def test_cascade_default_has_no_free_answer_band() -> None:
+    asyncio.run(_cascade_default_no_free_answer())
+
+
+async def _cascade_default_no_free_answer() -> None:
+    # Default high=None: even a near-perfect score must STILL reach the fallback. The cascade
+    # never bypasses the gate upward, because a high retrieval score can be a semantic false
+    # positive (ADR-0021) — the abstention guarantee is never traded for a cost saving.
+    fallback = _RecordingGate(verdict=False)
+    cascade = CascadeRelevanceGate(fallback)  # low=0.0, high=None (no free-answer band)
+
+    decisions = await cascade.should_answer([_check("very-confident", 0.99)])
+
+    assert decisions == [False]  # the fallback decided, not a free pass on the high score
+    assert [c.query for c in fallback.seen] == ["very-confident"]  # it WAS escalated
+
+
 def test_cascade_forwards_fallback_usage() -> None:
     asyncio.run(_cascade_usage())
 

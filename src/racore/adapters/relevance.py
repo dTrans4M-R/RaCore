@@ -65,22 +65,34 @@ class ThresholdRelevanceGate:
 
 
 class CascadeRelevanceGate:
-    """Escalate to an expensive gate only for the uncertain middle band of retrieval scores.
+    """Escalate to an expensive gate only for the uncertain band of retrieval scores.
 
-    The confident cases are decided for free from the reranked top score: below ``low`` →
-    abstain (no usable evidence), at or above ``high`` → answer (strong evidence). Only scores
-    in ``[low, high)`` — the gray zone where the cheap signal can't be trusted — are escalated
-    to ``fallback`` (e.g. the LLM gate). This bounds the paid-call rate, and so the added
-    latency, to the hard minority rather than every query (ADR-0021).
+    The two free bands are deliberately **asymmetric**, because their failure modes are not
+    equal:
 
-    With ``low=0.0`` and ``high=1.0`` every non-empty query falls in the gray zone, so the
-    fallback decides everything (the gate still abstains for free on empty retrieval); raise
-    ``low``/lower ``high`` against the eval harness to widen the free bands for your embedder.
+    * **Free-abstain** (score < ``low``) is always safe — nothing cleared the floor, so there is
+      no evidence to answer from, and the worst case is a false *refusal* (annoying, never a
+      fabricated answer).
+    * **Free-answer** (score ≥ ``high``) is **risky, and therefore opt-in** (``high=None`` by
+      default). A high retrieval score does **not** prove the answer is present: it can be a
+      semantic false positive — "how many rings does Neptune have?" retrieves "Saturn's prominent
+      ring system" at a high score, yet that does not answer the question. Skipping the gate on
+      that score re-introduces the exact false answer the gate exists to prevent (measured;
+      ADR-0021). So by default there is **no** free-answer band: every score at or above ``low``
+      is escalated to ``fallback`` (e.g. the LLM gate), bounding the paid-call rate to the
+      uncertain cases while never trading away the abstention guarantee.
+
+    Set ``high`` to opt into the free-answer band only once you have calibrated it on the eval
+    harness for your embedder and accept the trade. Empty retrieval always abstains for free.
     """
 
-    def __init__(self, fallback: RelevanceGate, *, low: float = 0.0, high: float = 1.0) -> None:
-        if not 0.0 <= low <= high <= 1.0:
-            raise ValueError("require 0.0 <= low <= high <= 1.0")
+    def __init__(
+        self, fallback: RelevanceGate, *, low: float = 0.0, high: float | None = None
+    ) -> None:
+        if not 0.0 <= low <= 1.0:
+            raise ValueError("require 0.0 <= low <= 1.0")
+        if high is not None and not low <= high <= 1.0:
+            raise ValueError("require low <= high <= 1.0 when a free-answer band is set")
         self._fallback = fallback
         self._low = low
         self._high = high
@@ -92,9 +104,9 @@ class CascadeRelevanceGate:
         for index, check in enumerate(checks):
             top = check.retrievals[0].score if check.retrievals else 0.0
             if not check.retrievals or top < self._low:
-                decisions.append(False)  # confident abstain — no paid call
-            elif top >= self._high:
-                decisions.append(True)  # confident answer — no paid call
+                decisions.append(False)  # confident abstain — no paid call (always safe)
+            elif self._high is not None and top >= self._high:
+                decisions.append(True)  # opted-in free-answer band — no paid call
             else:
                 decisions.append(None)  # gray zone — resolved by the fallback below
                 gray_indices.append(index)

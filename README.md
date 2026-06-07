@@ -224,10 +224,11 @@ accuracy 0.824 → 1.000** — abstaining on all three no-evidence controls and 
 row through — with **answer correctness held at 0.857** and faithfulness/citation still 1.0, on the
 lexical embedder where no score threshold can. The gate's tokens are priced into cost/answer
 (~$0.00022) like every billed component (ADR-0018); the `relevance` stage is ~1.1 s/query, which is why
-`--gate cascade` exists — it escalates to the paid gate only in the gray band
-`[--gate-min-score, --gate-high)`, holding refusal at 1.000 while cutting gate cost (~$0.00016/answer
-here) by answering the confident cases free. The same port takes a **local** LLM (Ollama,
-OpenAI-compatible) with zero core change (ADR-0021).
+`--gate cascade` exists — it escalates to the paid gate only above a `--gate-min-score` floor, and can
+*optionally* answer very-high-scoring rows for free via `--gate-high` (**off by default**: a high score
+can be a semantic false positive — e.g. "rings on Neptune" matching "Saturn's rings" — so the
+free-answer band is opt-in and must be calibrated, never trading away the abstention guarantee). The
+same port takes a **local** LLM (Ollama, OpenAI-compatible) with zero core change (ADR-0021).
 
 ## License
 

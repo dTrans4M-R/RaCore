@@ -305,4 +305,11 @@ which is exactly the cascade's reason to exist: `--gate cascade --gate-high 0.5`
 **1.000** while cutting gate cost to **~$0.00016/answer** (138 vs 195 tokens/answer) by answering the
 confident high-score rows for free. On a semantic embedder the free bands widen, realizing the latency
 win; the residual `p2`/`p5` wrong answers are the mock extractive generator quoting a distractor
-(Finding A), not the gate, which correctly let them through.
+(Finding A), not the gate, which correctly let them through. **Cascade-safety finding (folded into the
+code):** the cascade's *free-answer* high band is **opt-in and off by default** (`high=None`). A high
+retrieval score is **not** proof the answer is present — a Voyage run with `--gate-high 0.5` let "how
+many rings does Neptune have?" through on the high-scoring "Saturn's ring system" doc (a semantic false
+positive), re-introducing a false answer that the full-stack run caught only via the generator's *own*
+refusal (ADR-0013). The free-*abstain* low band stays safe (worst case a false refusal, never a
+fabrication); the free-answer band must be calibrated on the harness before opting in, so the default
+never trades away the abstention guarantee for a cost saving.
