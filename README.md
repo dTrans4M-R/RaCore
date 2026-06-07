@@ -80,8 +80,11 @@ with answer correctness held at 0.857 — even on the lexical embedder, where no
 against the store on the content-hash ID (ADR-0023): unchanged chunks are skipped (a re-ingest of an
 unchanged corpus embeds *nothing*), changed chunks are re-embedded, and `prune=True` deletes chunks the
 source dropped — so an edited or removed document leaves no stale content searchable. `IngestReport` now
-reports `added / unchanged / deleted` so the incremental behaviour is measured, not assumed. Build order
-and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
+reports `added / unchanged / deleted` so the incremental behaviour is measured, not assumed. **Staleness is
+surfaced** too (ADR-0024): a freshness timestamp rides `Document → Chunk → Retrieval`, so the age of an
+answer's evidence is visible on the `Answer`, and a pure `core/freshness.py` judges staleness against an
+explicit `now` (never the wall clock, so eval stays deterministic). Build order and per-phase "definition
+of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
 

@@ -17,6 +17,7 @@ from racore.adapters.judges import SubstringEntailmentJudge
 from racore.adapters.llm import ExtractiveLLM
 from racore.adapters.rerankers import NoopReranker
 from racore.adapters.vectorstores import InMemoryVectorStore
+from racore.core.freshness import stalest_age
 from racore.core.pipeline import Pipeline
 from racore.core.types import EvalCase, EvalResult, GoldenRow, Query
 from racore.eval.metrics import recall_at_k
@@ -61,6 +62,9 @@ class CaseOutcome:
     retrieved_sources: tuple[str, ...]
     unsupported_claims: tuple[str, ...]
     answer: str
+    # Age (seconds) of the stalest evidence backing this answer, measured against the harness
+    # ``now``; ``None`` when no ``now`` was given or the corpus carries no timestamps (ADR-0024).
+    evidence_age_s: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +111,7 @@ class HarnessReport:
                     "citation_correctness": c.citation_correctness,
                     "retrieval_recall": c.retrieval_recall,
                     "top_score": c.top_score,
+                    "evidence_age_s": c.evidence_age_s,
                     "relevant_sources": list(c.relevant_sources),
                     "retrieved_sources": list(c.retrieved_sources),
                     "unsupported_claims": list(c.unsupported_claims),
@@ -156,8 +161,13 @@ async def run(
     dataset: list[GoldenRow],
     evaluators: list[Evaluator],
     tenant_id: str = "default",
+    now: float | None = None,
 ) -> HarnessReport:
-    """Answer every row, then score the run with each evaluator."""
+    """Answer every row, then score the run with each evaluator.
+
+    ``now`` (epoch seconds), when given, is the reference time the per-case **evidence age** is
+    measured against, so a run over a dated corpus surfaces how stale each answer's evidence is
+    (ADR-0024). Default ``None`` leaves freshness unreported — the mock corpus carries no dates."""
     cases: list[EvalCase] = []
     for row in dataset:
         answer = await pipeline.answer(Query(text=row.question, tenant_id=tenant_id))
@@ -177,7 +187,7 @@ async def run(
         stage_millis=_stage_means(cases),
         tokens_in_per_answer=_mean([_sum_tokens(u, "input") for u in per_answer_usages]),
         tokens_out_per_answer=_mean([_sum_tokens(u, "output") for u in per_answer_usages]),
-        per_case=tuple(_case_outcome(case) for case in cases),
+        per_case=tuple(_case_outcome(case, now) for case in cases),
     )
 
 
@@ -202,7 +212,7 @@ def _cost_per_answer(per_answer_usages: list[tuple[TokenUsage, ...]]) -> float |
     return _mean(answer_costs) if answer_costs else 0.0
 
 
-def _case_outcome(case: EvalCase) -> CaseOutcome:
+def _case_outcome(case: EvalCase, now: float | None = None) -> CaseOutcome:
     """Flatten one answered case into the per-row facts worth eyeballing."""
     row, answer = case.row, case.answer
     correct = (
@@ -224,6 +234,7 @@ def _case_outcome(case: EvalCase) -> CaseOutcome:
         retrieved_sources=tuple(r.chunk.source for r in answer.retrievals),
         unsupported_claims=answer.grounding.unsupported_claims,
         answer=answer.text,
+        evidence_age_s=None if now is None else stalest_age(answer.retrievals, now),
     )
 
 
@@ -240,6 +251,8 @@ def _render_case(case: CaseOutcome) -> str:
         missed = [s for s in case.relevant_sources if s not in case.retrieved_sources]
         top = case.retrieved_sources[0] if case.retrieved_sources else "(none)"
         body.append(f"        retrieved top: {top}   missed relevant: {missed or 'none'}")
+    if case.evidence_age_s is not None:
+        body.append(f"        stalest evidence: {case.evidence_age_s / 86400:.1f}d old")
     body.extend(
         f"        - unsupported: {_truncate(claim, 120)}" for claim in case.unsupported_claims
     )

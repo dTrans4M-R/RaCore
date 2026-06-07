@@ -17,17 +17,23 @@ if TYPE_CHECKING:
 
 
 class InMemoryDocumentSource:
-    """Holds raw ``(source, text)`` pairs and emits them as Documents on ``fetch()``."""
+    """Holds raw ``(source, text)`` pairs and emits them as Documents on ``fetch()``.
+
+    ``add`` accepts an optional ``created_at`` (epoch seconds) so a test or demo can seed
+    documents with known ages and exercise the freshness path (ADR-0024) deterministically —
+    real connectors supply the source's own publish/modified time here instead.
+    """
 
     def __init__(self, documents: Sequence[tuple[str, str]] | None = None) -> None:
-        # Each entry is (source, text): source is the provenance label, text is the body.
-        self._raw: list[tuple[str, str]] = list(documents or [])
+        # Each entry is (source, text, created_at): the constructor's pairs default to an unset
+        # (0.0) timestamp; ``add(..., created_at=)`` sets a real one.
+        self._raw: list[tuple[str, str, float]] = [(s, t, 0.0) for s, t in (documents or [])]
 
-    def add(self, source: str, text: str) -> None:
-        self._raw.append((source, text))
+    def add(self, source: str, text: str, *, created_at: float = 0.0) -> None:
+        self._raw.append((source, text, created_at))
 
     async def fetch(self) -> list[Document]:
         return [
-            Document(id=content_id(source, text), text=text, source=source)
-            for source, text in self._raw
+            Document(id=content_id(source, text), text=text, source=source, created_at=created_at)
+            for source, text, created_at in self._raw
         ]

@@ -456,3 +456,34 @@ add one → `added=2, unchanged=1, deleted=2`, embedding work is the 2 new chunk
 *change*, not the corpus), and a post-sync search returns exactly the new corpus — the removed doc and the
 pre-edit text are gone (the freshness guarantee). The existing baseline eval and the idempotent-reingest
 e2e test are unchanged, since the default path is still additive and first-ingest numbers are identical.
+
+### ADR-0024 — Staleness surfaced: freshness as a carried fact + an injected-`now` judgment (Phase 3, slice 2)
+
+**Context.** Phase 3 DoD also requires "staleness surfaced." `Document.created_at` (epoch seconds) existed
+as a seam from Phase 0 but was never set or propagated, so the age of the evidence behind an answer was
+invisible. The hard constraint: computing staleness needs a clock, but the eval harness must stay
+**deterministic** (ADR-0010) — a run has to score the same today and next year — so `time.time()` must not
+leak into core logic.
+
+**Decision.** Split the **fact** from the **judgment**. The fact — a timestamp — is carried on the chunk:
+`Chunk` gains `created_at`, propagated `Document → Chunk` by the chunker, so it rides on every
+`Retrieval` and therefore on every `Answer` with no new field. It is deliberately **excluded from the
+content-hash ID**, so re-stamping identical content neither changes its identity nor forces a re-embed;
+the consequence — content-identical re-ingest keeps the chunk's *first-seen* timestamp — is the intended
+semantics (freshness tracks **content change**, not re-fetch time; a separate "last-seen" recency is a
+future refinement, not built now). The judgment lives in a pure `core/freshness.py` (`age_seconds`,
+`stalest_age`, `stale`) whose every function takes `now` as an **explicit argument** — no wall-clock read
+— so staleness is the caller's policy and the facts stay reproducible. An *unset* timestamp (`0.0`) means
+"age unknown" and is treated as **not stale** (absence of a date is not evidence of staleness). The harness
+`run()` gains an optional `now`; when given, each case's stalest evidence age is computed and shown in `-v`
+("stalest evidence: Nd old"). `now` defaults to `None`, so the $0 mock corpus (no dates) reports nothing
+and the **baseline output and numbers are unchanged**.
+
+**Measured (`tests/test_freshness.py`, $0/stdlib, no API, fixed `now`).** Helpers: unset → `None`, a 10-day
+span → `10·86400`, a future timestamp clamps to `0.0` (connector clock skew reads fresh, never negative);
+a 30-day `stale()` policy flags only the 400-day span and never the undated one. End-to-end: seed a source
+with dated docs (`add(..., created_at=)`), ingest, answer — the timestamps arrive intact on
+`answer.retrievals`, and `stalest_age` reads 400 days. Harness: with a reference `now` the per-case
+`evidence_age_s` is populated and `-v` renders "stalest evidence:"; with `now=None` it is `None` and the
+line is absent — the default path is provably untouched. Real dates (and a gated freshness metric) arrive
+with the live connector in slice 3, where a source supplies its own publish/modified time.

@@ -53,6 +53,7 @@ class FixedWindowChunker:
                     start=start,
                     end=end,
                     source=document.source,
+                    created_at=document.created_at,  # carry freshness to retrieval (ADR-0024).
                 )
             )
             if i + self._window >= len(spans):

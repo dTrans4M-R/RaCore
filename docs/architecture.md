@@ -75,7 +75,9 @@ flowchart TB
 **`ingest(source, tenant)`** — `DocumentSource.fetch → extract → Chunker.chunk → diff → EmbeddingProvider.embed
 → VectorStore.upsert [→ prune]`, recording metadata + a freshness timestamp. The diff is on the content-hash
 ID (ADR-0011): only changed chunks are embedded, and `prune=True` deletes chunks the source dropped, so
-re-index is incremental and leaves no stale content (ADR-0023).
+re-index is incremental and leaves no stale content (ADR-0023). That freshness timestamp is carried
+`Document → Chunk → Retrieval`, so the age of an answer's evidence is visible on the `Answer`; staleness is
+judged against an explicit `now` (`core/freshness.py`), never the wall clock, keeping eval deterministic (ADR-0024).
 
 **`answer(query, tenant, user)`** — grounding, relevance, and memory are first-class:
 

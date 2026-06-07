@@ -66,6 +66,11 @@ class Chunk:
     start: int
     end: int
     source: str = ""  # carried from the parent document for convenient provenance.
+    # Freshness timestamp carried from the parent document (epoch seconds; 0.0 = unset). It is
+    # deliberately *not* part of the chunk's content-hash ID — re-stamping identical content must
+    # not change its identity or force a re-embed (ADR-0024). So content-identical re-ingest keeps
+    # the chunk's first-seen timestamp: freshness tracks content change, not re-fetch time.
+    created_at: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
