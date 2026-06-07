@@ -647,3 +647,25 @@ field do I work in?" now extracts nothing. Gate green: **107 passed**.
 piece held back from slice 2 so it ships with a number), the opt-in **LLM extractor** as the
 "paid only improves" lever (it lifts *recall* of implicit/paraphrased facts the rule floor misses, on the
 same scenarios), and compaction/TTL. This slice fixes the number the lift is measured by; 3b moves it.
+
+### ADR-0029 — Expose the rule floor's extraction-recall ceiling before closing it (Phase 4, slice 3b-i)
+
+**Context.** ADR-0028's lift was **+1.000** — but over five scenarios that were *all* explicit
+self-statements, the exact shape the $0 rule extractor was built to catch. A number that is perfect
+because the test contains only the cases the code already handles is "perfect for the wrong reason."
+Before building a paid extractor that "only improves," we have to show — with a number — what the $0
+floor *cannot* do. (Same discipline as the harder retrieval corpus that turned a saturated hit@k=1.0
+into a real recall@k gap before the embedder was built.)
+
+**Decision.** Add **implicit-fact** scenarios to `eval/memory.py` — durable facts stated *without* a
+self-statement pattern ("we usually sync on Tuesday mornings", "I had to give up gluten last year",
+"Python is the only language I'm comfortable writing") — and an **`extraction_recall`** metric (did a
+scenario's setup leave any stored memory for that user?). The rule floor structurally misses these (no
+"I prefer / my X is / remember that"), so the headline now reads the floor's *real* recall, not a
+saturated 1.0.
+
+**Measured (`tests/test_memory_eval.py`; $0, no API).** On the $0 rule floor over 8 scenarios (5 explicit,
+3 implicit): **extraction recall 0.625**, **lift +0.625** (down from the misleading +1.000) — every
+explicit fact extracted and answered (cited to `memory/`), **none** of the implicit facts extracted; the
+memory-off control stays 0.000. That 0.625 is the honest ceiling the LLM extractor is measured against
+(ADR-0030). Gate green: **107 passed**.
