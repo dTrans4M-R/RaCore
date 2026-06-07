@@ -487,3 +487,33 @@ with dated docs (`add(..., created_at=)`), ingest, answer — the timestamps arr
 `evidence_age_s` is populated and `-v` renders "stalest evidence:"; with `now=None` it is `None` and the
 line is absent — the default path is provably untouched. Real dates (and a gated freshness metric) arrive
 with the live connector in slice 3, where a source supplies its own publish/modified time.
+
+### ADR-0025 — A live filesystem connector (Phase 3, slice 3)
+
+**Context.** Phase 3 DoD's third clause: "a live connector." Slices 1–2 built incremental re-index and
+staleness, but every prior `DocumentSource` was `InMemoryDocumentSource` — seeded by hand, with synthetic
+(or absent) dates. Nothing exercised the phase against a *real, changing* source, and the freshness
+timestamps were never real. The first live connector had to (a) reflect a source's current contents on each
+fetch so incremental re-index is demonstrable end-to-end, (b) supply **real** `created_at` so staleness is
+genuine, and (c) stay $0/stdlib and **offline-testable** — a network connector (HTTP/S3) can't be tested
+deterministically in CI.
+
+**Decision.** Ship `FileSystemDocumentSource` (in `adapters/sources.py`): each `fetch()` globs a directory
+(`**/*.txt` by default), reads each file's text, derives a stable posix-relative `source` label, and uses
+the file's `st_mtime` as `created_at`. A directory is the right *first* live connector precisely because it
+is genuinely live (a fetch sees whatever is on disk *now* — adds, edits, removes since last ingest), its
+mtimes are real freshness data, and it needs no network — so it's fully deterministic under a temp dir with
+`os.utime`. A missing/non-directory root yields an empty corpus rather than raising, so a connector pointed
+at a not-yet-created folder degrades gracefully. Text only; PDF/HTML extraction and remote connectors
+(HTTP `Last-Modified`, S3, SEC-EDGAR) are further adapters behind the same `fetch` port — added when each
+concrete case arrives, not speculatively (no premature abstraction). No new runtime dependency
+(`pathlib`/`os` are stdlib).
+
+**Measured (`tests/test_filesystem_source.py`, $0/stdlib, no network, temp dir + `os.utime`).** Fetch reads
+text files recursively with posix labels, excludes non-matching extensions, and carries each file's real
+mtime into `created_at`. The capstone ties all three slices together over one real folder: ingest 3 files
+(`prune=True`) → `added=3`; the answer's stalest evidence is the genuinely 400-day-old file (real mtime →
+chunk → retrieval → `stalest_age`); then keep one file, edit one, remove one, add one and re-ingest →
+`added=2, unchanged=1, deleted=2`, and a search confirms the index matches the folder exactly — the removed
+file and the pre-edit text are gone. **Phase 3 (Freshness) DoD is now fully met: incremental re-index
+works, staleness is surfaced, and a live connector drives both.**

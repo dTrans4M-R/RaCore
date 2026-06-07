@@ -1,12 +1,13 @@
-"""An in-memory document source: seed it with ``(source, text)`` pairs, fetch Documents.
+"""Document sources: an in-memory one for tests/demos, and a live filesystem connector.
 
-Useful for tests, the eval corpus, and quick demos. Real connectors (PDF, SEC-EDGAR,
-web, S3) implement the same ``fetch`` port. IDs are content hashes minted at fetch time
-(ADR-0011), so the same text always yields the same document ID.
+Both implement the same ``fetch`` port; real remote connectors (PDF, SEC-EDGAR, web, S3) are
+further adapters behind it. IDs are content hashes minted at fetch time (ADR-0011), so the same
+text always yields the same document ID — which is what makes incremental re-index work (ADR-0023).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from racore.core.ids import content_id
@@ -37,3 +38,42 @@ class InMemoryDocumentSource:
             Document(id=content_id(source, text), text=text, source=source, created_at=created_at)
             for source, text, created_at in self._raw
         ]
+
+
+class FileSystemDocumentSource:
+    """A live document source backed by a directory of text files.
+
+    Each ``fetch()`` reflects the directory's *current* contents, so re-ingesting (``prune=True``)
+    after files are added, edited, or removed picks up exactly the delta (ADR-0023). Every file's
+    modified time (``st_mtime``) becomes its document's ``created_at``, so the age of the evidence
+    behind an answer is **real**, not synthetic (ADR-0024) — this is what makes the freshness path
+    concrete end-to-end. Text only; structured formats (PDF, HTML) are heavier adapters behind the
+    same port. A missing root (or one that isn't a directory) yields an empty corpus, not an error,
+    so a connector pointed at a not-yet-created folder degrades gracefully.
+    """
+
+    def __init__(
+        self, root: str | Path, *, pattern: str = "**/*.txt", encoding: str = "utf-8"
+    ) -> None:
+        self._root = Path(root)
+        self._pattern = pattern
+        self._encoding = encoding
+
+    async def fetch(self) -> list[Document]:
+        if not self._root.is_dir():
+            return []
+        documents: list[Document] = []
+        for path in sorted(self._root.glob(self._pattern)):
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding=self._encoding)
+            source = path.relative_to(self._root).as_posix()  # stable, portable provenance label.
+            documents.append(
+                Document(
+                    id=content_id(source, text),
+                    text=text,
+                    source=source,
+                    created_at=path.stat().st_mtime,
+                )
+            )
+        return documents

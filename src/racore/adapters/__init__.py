@@ -24,7 +24,7 @@ from racore.adapters.relevance import CascadeRelevanceGate, ThresholdRelevanceGa
 from racore.adapters.relevance_anthropic import AnthropicRelevanceGate
 from racore.adapters.relevance_openai import OpenAIRelevanceGate
 from racore.adapters.rerankers import NoopReranker
-from racore.adapters.sources import InMemoryDocumentSource
+from racore.adapters.sources import FileSystemDocumentSource, InMemoryDocumentSource
 from racore.adapters.vectorstores import InMemoryVectorStore
 
 __all__ = [
@@ -35,6 +35,7 @@ __all__ = [
     "CascadeRelevanceGate",
     "ExtractiveLLM",
     "FileMemoryStore",
+    "FileSystemDocumentSource",
     "FixedWindowChunker",
     "InMemoryDocumentSource",
     "InMemoryVectorStore",

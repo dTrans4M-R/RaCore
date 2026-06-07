@@ -45,7 +45,7 @@ here, never in a consumer repo. See [`CLAUDE.md`](CLAUDE.md) for the house rules
 ## Status
 
 **Phase 0 — Foundation: the walking skeleton is live**, **Phase 1 — Grounding is in**, **Phase 2 —
-Relevance & refusal is in**, and **Phase 3 — Freshness has begun.** A thin end-to-end slice runs through the real ports at **$0**
+Relevance & refusal is in**, and **Phase 3 — Freshness is in.** A thin end-to-end slice runs through the real ports at **$0**
 external spend — ingest → retrieve → rerank → ground → cite → answer — with per-stage timing
 (ADR-0010) and content-hash IDs (ADR-0011), plus an eval harness that prints a baseline over a golden
 set.
@@ -83,14 +83,19 @@ source dropped — so an edited or removed document leaves no stale content sear
 reports `added / unchanged / deleted` so the incremental behaviour is measured, not assumed. **Staleness is
 surfaced** too (ADR-0024): a freshness timestamp rides `Document → Chunk → Retrieval`, so the age of an
 answer's evidence is visible on the `Answer`, and a pure `core/freshness.py` judges staleness against an
-explicit `now` (never the wall clock, so eval stays deterministic). Build order and per-phase "definition
-of done" are in [`docs/roadmap.md`](docs/roadmap.md).
+explicit `now` (never the wall clock, so eval stays deterministic). And a first **live connector**,
+`FileSystemDocumentSource` (ADR-0025), drives both: each fetch reflects a directory's current contents
+(so re-ingest is incremental) and every file's modified time becomes its real freshness timestamp — $0,
+stdlib, offline-testable. With that, **Phase 3's definition of done is met**: incremental re-index works,
+staleness is surfaced, and a live connector drives them (see [`docs/freshness.md`](docs/freshness.md)).
+Build order and per-phase "definition of done" are in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Docs
 
 - [`docs/architecture.md`](docs/architecture.md) — ports-and-adapters design, core types, the ingest/answer pipelines, how apps connect.
 - [`docs/evaluation.md`](docs/evaluation.md) — the measurement strategy (the differentiator).
 - [`docs/latency.md`](docs/latency.md) — latency & streaming: replying promptly without awkward pauses.
+- [`docs/freshness.md`](docs/freshness.md) — keeping the index current (incremental re-index, staleness, connectors).
 - [`docs/memory.md`](docs/memory.md) — the per-user persistent memory subsystem.
 - [`docs/roadmap.md`](docs/roadmap.md) — the phased build plan and per-phase definition of done.
 - [`docs/decisions.md`](docs/decisions.md) — the architecture decision log (why each choice was made).

@@ -63,7 +63,7 @@ flowchart TB
 | `VectorStore` | upsert · filtered similarity search · content-hash diff (`chunk_ids`/`delete`) for incremental re-index, per tenant | pgvector · inmemory |
 | `Reranker` | re-order candidates by query relevance | voyage-rerank · cross-encoder · noop |
 | `Chunker` | document → structure-aware chunks | structural (page/section) · fixed-window |
-| `DocumentSource` | fetch + extract raw documents (freshness) | pdf · sec-edgar · web · s3 |
+| `DocumentSource` | fetch + extract raw documents, with a freshness timestamp | filesystem · inmemory · pdf · sec-edgar · web · s3 |
 | `MemoryStore` | per-user read/write/compaction | pg-memory · file-memory |
 | `LLMProvider` | grounded generation (streaming) | anthropic · openai |
 | `EntailmentJudge` | per-claim: does cited evidence support it? | substring · token-overlap · llm-judge |
