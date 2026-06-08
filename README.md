@@ -169,7 +169,9 @@ curl -sN localhost:8000/answer -d '{"text":"What is closest to the Sun?","tenant
 Routes: `GET /health`, `POST /ingest`, `POST /answer` (SSE), `GET`/`POST /memory`. Every call is
 tenant-scoped, repeat asks are served from the grounding-gated cache, and each request emits a
 structured observability event. No socket is needed to *test* it — the suite drives the ASGI app
-through the raw protocol with fake `receive`/`send`.
+through the raw protocol with fake `receive`/`send`. The full HTTP contract — request/response
+schemas and the SSE event shapes — is documented in [`docs/openapi.yaml`](docs/openapi.yaml)
+(OpenAPI 3.1), kept honest by a drift-guard test that asserts it against the served routes.
 
 ## How it works
 
@@ -363,6 +365,7 @@ Read in roughly this order:
 - [freshness.md](docs/freshness.md) — keeping the index current (incremental re-index, staleness, connectors).
 - [latency.md](docs/latency.md) — latency & streaming: replying promptly without awkward pauses.
 - [productizing.md](docs/productizing.md) — the service surface: facade, ASGI/SSE, multi-tenancy, grounding-gated caching, observability, and the open-core line.
+- [openapi.yaml](docs/openapi.yaml) — the HTTP API contract (OpenAPI 3.1): every route, schema, and SSE event shape, drift-guarded against the code.
 - [roadmap.md](docs/roadmap.md) — the phased build plan and per-phase definition of done.
 - [decisions.md](docs/decisions.md) — the architecture decision log (**why** each choice was made); the deepest reference.
 

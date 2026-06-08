@@ -1,0 +1,355 @@
+openapi: 3.1.0
+info:
+  title: RaCore Engine HTTP API
+  version: 0.1.0
+  summary: The dependency-free ASGI surface over the RaCore retrieval engine.
+  description: >
+    The hand-rolled, zero-dependency ASGI surface exposed by `racore.service.asgi` over the
+    transport-agnostic `RaCoreService` facade. It is an *adapter*, not the product: it maps JSON
+    requests onto the core objects and serializes the rich core results back out. Tenant and user
+    are explicit request fields; the service enforces isolation, so a call can never cross a tenant
+    boundary. This document is the contract for that surface and is kept honest by a drift-guard test
+    (`tests/test_openapi_contract.py`, ADR-0034) that asserts these paths equal the routes the app
+    actually serves.
+
+
+    Note: the engine itself carries no auth, rate-limiting, or quotas — those live in the managed
+    operation *around* the engine (the open-core line, see `docs/productizing.md`), not in this
+    surface.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: http://localhost:8000
+    description: >
+      Any ASGI server runs the app — the server is a deploy choice, never a package dependency
+      (e.g. `uvicorn module:app`).
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Liveness check.
+      responses:
+        "200":
+          description: The service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                required: [status]
+  /ingest:
+    post:
+      operationId: ingest
+      summary: Ingest a batch of documents into a tenant's corpus (incremental).
+      description: >
+        Embeds and upserts only new chunks; identical content (by content-hash ID) is skipped. With
+        `prune: true` the batch is treated as the tenant's *complete* corpus and chunks no longer
+        present are deleted (the freshness reconcile, ADR-0023).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestRequest"
+      responses:
+        "200":
+          description: The ingest report — what landed and how long each stage took.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /answer:
+    post:
+      operationId: answer
+      summary: Answer one question, streaming the text as Server-Sent Events.
+      description: >
+        Responds with `text/event-stream`. Zero or more `token` events stream the answer text for a
+        fast time-to-first-token, then exactly one terminal `done` event carries the citations,
+        grounding, and per-stage timings (ADR-0020). Each event is framed as
+        `event: <name>\ndata: <json>\n\n`; `<json>` is an `AnswerTokenEvent` for `token` events and an
+        `AnswerDoneEvent` for the `done` event. Concatenating every `token` event's `text` yields the
+        `done` event's `text` exactly. A `user_id` opts the turn into the per-user memory loop.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnswerRequest"
+      responses:
+        "200":
+          description: >
+            The SSE stream of `token` events followed by a single `done` event. The schema below is
+            the payload of that `done` event; `token` event payloads are `AnswerTokenEvent`.
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/AnswerDoneEvent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /memory:
+    get:
+      operationId: readMemory
+      summary: Read a user's most relevant memories.
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          description: Relevance query; when omitted, the most salient/recent memories are returned.
+          schema:
+            type: string
+        - name: k
+          in: query
+          required: false
+          description: Maximum number of memories to return.
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+      responses:
+        "200":
+          description: The user's memories, most relevant first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MemoryItem"
+                required: [items]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      operationId: writeMemory
+      summary: Teach the system a durable fact for a user.
+      description: >
+        The same extractor that runs implicitly on every `answer` turn (ADR-0026) proposes durable
+        memories from `text`; the store persists them. An empty `stored` list means the text stated
+        nothing durable — it is not an error.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryWriteRequest"
+      responses:
+        "200":
+          description: The memories that were stored (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stored:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MemoryItem"
+                required: [stored]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+components:
+  responses:
+    BadRequest:
+      description: >
+        The request was malformed or violated a service guard. The body carries a stable,
+        machine-readable `code` a client can switch on without parsing the human message.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error code (e.g. `invalid_request`, `not_found`).
+            message:
+              type: string
+          required: [code, message]
+      required: [error]
+    DocumentInput:
+      type: object
+      description: One document to ingest. The content-hash ID is minted by the engine, never supplied.
+      properties:
+        text:
+          type: string
+        source:
+          type: string
+          description: A provenance label — a URI, path, or connector key.
+      required: [text, source]
+    IngestRequest:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocumentInput"
+        prune:
+          type: boolean
+          default: false
+          description: Treat the batch as the tenant's complete corpus and delete chunks no longer present.
+      required: [tenant_id, documents]
+    StageTiming:
+      type: object
+      description: Wall-clock duration of one pipeline stage (ADR-0010).
+      properties:
+        stage:
+          type: string
+        ms:
+          type: number
+      required: [stage, ms]
+    IngestReport:
+      type: object
+      description: "`added + unchanged == chunks`."
+      properties:
+        documents:
+          type: integer
+        chunks:
+          type: integer
+        added:
+          type: integer
+          description: Chunks embedded and upserted this run.
+        unchanged:
+          type: integer
+          description: Chunks already present (identical content hash) and skipped.
+        deleted:
+          type: integer
+          description: Chunks pruned because they no longer appear in the source.
+        timings:
+          type: array
+          items:
+            $ref: "#/components/schemas/StageTiming"
+        total_ms:
+          type: number
+      required: [documents, chunks, added, unchanged, deleted, timings, total_ms]
+    AnswerRequest:
+      type: object
+      properties:
+        text:
+          type: string
+        tenant_id:
+          type: string
+          default: default
+        user_id:
+          type: [string, "null"]
+          default: null
+          description: Opts the turn into the per-user memory loop when present.
+        k:
+          type: integer
+          default: 5
+          minimum: 1
+          description: How many candidates to retrieve.
+      required: [text]
+    Citation:
+      type: object
+      description: An inline answer marker resolved to the evidence it points at.
+      properties:
+        marker:
+          type: integer
+          description: The 1-based citation marker as it appears in the answer text.
+        source:
+          type: string
+        quote:
+          type: string
+          description: The verbatim source span backing the claim.
+        doc_id:
+          type: string
+      required: [marker, source, quote, doc_id]
+    Grounding:
+      type: object
+      properties:
+        faithfulness:
+          type: number
+          description: Supported claims / all claims (headline metric).
+        citation_correctness:
+          type: number
+          description: Correctly-cited claims / cited claims.
+        is_grounded:
+          type: boolean
+        unsupported_claims:
+          type: array
+          items:
+            type: string
+      required: [faithfulness, citation_correctness, is_grounded, unsupported_claims]
+    AnswerTokenEvent:
+      type: object
+      description: Payload of a `token` SSE event — one delta of the streaming answer text.
+      properties:
+        text:
+          type: string
+      required: [text]
+    AnswerDoneEvent:
+      type: object
+      description: Payload of the single terminal `done` SSE event.
+      properties:
+        text:
+          type: string
+        abstained:
+          type: boolean
+          description: True when the engine declined to answer for lack of relevant evidence.
+        citations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Citation"
+        grounding:
+          $ref: "#/components/schemas/Grounding"
+        timings:
+          type: array
+          items:
+            $ref: "#/components/schemas/StageTiming"
+        total_ms:
+          type: number
+      required: [text, abstained, citations, grounding, timings, total_ms]
+    MemoryWriteRequest:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+        user_id:
+          type: string
+        text:
+          type: string
+      required: [tenant_id, user_id, text]
+    MemoryItem:
+      type: object
+      description: A single per-(tenant, user) memory.
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [profile, semantic, episodic, working]
+        content:
+          type: string
+        key:
+          type: string
+          description: The slot this fact occupies (e.g. "name"); empty when the fact just accumulates.
+        salience:
+          type: number
+        source:
+          type: string
+          description: Turn id or document ref — provenance; memory is grounded too.
+      required: [id, kind, content, key, salience, source]

@@ -1,6 +1,6 @@
 [project]
 name = "racore"
-version = "0.0.0"
+version = "0.1.0"
 description = "A grounded, real-time, memory-aware retrieval engine with evaluation as a first-class concern."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,12 +23,16 @@ voyage = ["voyageai>=0.4"]
 # Repository = "https://github.com/<you>/RaCore"   # fill in when published
 
 [dependency-groups]
-# Installed by default on `uv sync`. The dev toolchain = the quality gate.
+# Installed by default on `uv sync`. The dev toolchain = the quality gate. These are DEV-only —
+# the runtime core stays dependency-free (ADR-0007). PyYAML (+ its stubs) is here solely so the
+# OpenAPI contract test can parse `docs/openapi.yaml` (ADR-0034); it never enters the package.
 dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pytest>=8",
     "pre-commit>=3.8",
+    "pyyaml>=6",
+    "types-pyyaml>=6",
 ]
 
 [build-system]

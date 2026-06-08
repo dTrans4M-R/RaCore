@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs
 
 from racore.service.core import ServiceError
@@ -60,6 +60,19 @@ _SSE_HEADERS = [
     (b"cache-control", b"no-cache"),
 ]
 
+# The canonical (method, path) -> handler-method-name table, in one place. ``__call__`` dispatches
+# off it and ``ROUTES`` exposes its keys, so the documented surface (``docs/openapi.yaml``) and the
+# served surface are checked against a single source by the contract test (ADR-0034) — neither can
+# drift without the gate noticing.
+_ROUTES: dict[tuple[str, str], str] = {
+    ("GET", "/health"): "_health",
+    ("POST", "/ingest"): "_ingest",
+    ("POST", "/answer"): "_answer",
+    ("GET", "/memory"): "_read_memory",
+    ("POST", "/memory"): "_write_memory",
+}
+ROUTES: frozenset[tuple[str, str]] = frozenset(_ROUTES)
+
 
 @dataclass(frozen=True, slots=True)
 class ASGIApplication:
@@ -80,17 +93,11 @@ class ASGIApplication:
         if len(path) > 1:
             path = path.rstrip("/")
 
-        routes: dict[tuple[str, str], Handler] = {
-            ("GET", "/health"): self._health,
-            ("POST", "/ingest"): self._ingest,
-            ("POST", "/answer"): self._answer,
-            ("GET", "/memory"): self._read_memory,
-            ("POST", "/memory"): self._write_memory,
-        }
-        handler = routes.get((method, path))
-        if handler is not None:
+        handler_name = _ROUTES.get((method, path))
+        if handler_name is not None:
+            handler = cast("Handler", getattr(self, handler_name))
             await handler(scope, receive, send)
-        elif any(known_path == path for _, known_path in routes):
+        elif any(known_path == path for _, known_path in _ROUTES):
             await _error(send, 405, "method_not_allowed", f"{method} is not allowed on {path}")
         else:
             await _error(send, 404, "not_found", f"no route for {path}")

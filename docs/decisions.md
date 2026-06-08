@@ -810,3 +810,30 @@ not USD — converting to cost is the billing layer's job (the price table lives
 deliberately not pulled into the service); `request_id` is a fresh UUID, not yet threaded from an
 inbound trace header (the hook for distributed tracing); and the ASGI layer does not add HTTP-level
 fields (status, path) to the event yet — a transport-specific enrichment for later.
+
+### ADR-0034 — A documented, drift-guarded HTTP contract (OpenAPI 3.1)
+
+**Context.** Phase 5 shipped the ASGI surface, but its contract lived only implicitly — in the route
+table, the serializers, and the request types. The first real consumer (a separate UI/BFF product
+that generates a typed client) and any external integrator need a *machine-readable* contract to build
+against, not prose. And this engine treats measurement integrity as the moat: a contract document that
+can silently drift from the code it describes is worse than none, because it lies with authority.
+
+**Decision.** Author `docs/openapi.yaml` (OpenAPI 3.1) as the single source of truth for the HTTP
+surface — all five routes, the SSE `token`/`done` event shapes, and the wire schemas exactly as the
+serializers emit them (e.g. `StageTiming.millis` → `ms`, `Citation.marker` an integer, `MemoryItem.key`
+a possibly-empty string). To make drift impossible rather than merely discouraged, the dispatch table is
+hoisted into one canonical `_ROUTES` map that `__call__` dispatches off and `ROUTES` exposes; a contract
+test (`tests/test_openapi_contract.py`) asserts the documented `(method, path)` set equals `ROUTES` in
+*both* directions, with structural guards (the `text/event-stream` media type on `/answer`, a 400 on
+every fallible route, no dangling `$ref`). PyYAML and its stubs enter the **dev group only** — the
+runtime core stays dependency-free (ADR-0007); the spec is documentation, never served by the app.
+
+**Result.** The surface now has a contract a client generator (or a human) can rely on, and it cannot
+diverge from the served routes without failing the gate. Gate green: **134 passed, 5 skipped** (lean
+env). This is the artifact the downstream BFF/UI generate their typed client from, and it ships in the
+first tagged release, **v0.1.0**. **Honest caveats / deferred:** the spec is hand-authored, so the test
+guards the route set and structure but not full payload-schema conformance against live responses — a
+deliberate line, to avoid brittleness and a JSON-schema-validator dependency (the behavioural ASGI tests
+already pin the payload shapes). Auth, rate-limiting, and quotas remain out of this surface by design —
+they belong to the managed operation around the engine (the open-core line, `docs/productizing.md` §6).

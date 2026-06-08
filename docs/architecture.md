@@ -116,7 +116,9 @@ engine logic — only product-surface concern. Two ways to reach it:
   How any Python app embeds the engine.
 - **HTTP service** (`service/asgi.py`) — a **dependency-free ASGI app**: `GET /health`, `POST /ingest`,
   `POST /answer` (SSE streaming), `GET/POST /memory`. No web framework; any ASGI server runs it. For
-  non-Python apps or process isolation.
+  non-Python apps or process isolation. Its contract is documented in
+  [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1) and guarded against drift: the app dispatches off one
+  canonical route table (`asgi.ROUTES`) that a contract test asserts the spec against (ADR-0034).
 
 Cross-cutting product concerns live at this layer, not in the core: **grounding-gated caching**
 (`AnswerCache`, the latency lever, ADR-0032) and **per-request observability** (a `ServiceEvent` per
