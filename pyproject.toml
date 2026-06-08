@@ -1,6 +1,6 @@
 [project]
 name = "racore"
-version = "0.1.0"
+version = "0.1.1"
 description = "A grounded, real-time, memory-aware retrieval engine with evaluation as a first-class concern."
 readme = "README.md"
 requires-python = ">=3.12"

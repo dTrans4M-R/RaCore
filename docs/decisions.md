@@ -837,3 +837,18 @@ guards the route set and structure but not full payload-schema conformance again
 deliberate line, to avoid brittleness and a JSON-schema-validator dependency (the behavioural ASGI tests
 already pin the payload shapes). Auth, rate-limiting, and quotas remain out of this surface by design —
 they belong to the managed operation around the engine (the open-core line, `docs/productizing.md` §6).
+
+### ADR-0035 — Ship a PEP 561 `py.typed` marker
+
+**Context.** The engine passes `mypy --strict` on its own source, but shipped no `py.typed` marker — so
+any downstream Python consumer that imports `racore` (e.g. an in-process backend that pins it) sees it as
+*untyped*: mypy reports `import-untyped` and the call boundary into the engine degrades to `Any`, exactly
+where a consumer most wants the engine's precise signatures.
+
+**Decision.** Add an empty `src/racore/py.typed` marker (PEP 561) so the engine advertises its inline
+types across the package boundary; hatchling ships it in the wheel as package data. No code or signature
+changes — the types were always there, this just makes them visible to consumers. Released as v0.1.1.
+
+**Result.** A consumer that pins `racore` now type-checks its engine calls under strict mypy against the
+real signatures, not `Any`. The engine's own gate is unaffected. First surfaced by the downstream BFF;
+the fix belongs in the engine (one marker for every consumer), not a per-consumer mypy override.
